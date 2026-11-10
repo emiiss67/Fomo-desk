@@ -197,6 +197,8 @@
   async function loadRoute(changed) {
     const r = route(), ch = f => !changed || changed.includes(f);
     if (r.name === "coin" && r.arg && (ch(`coin/${r.arg}.json`) || !S.coin[r.arg])) await getOpt(`coin/${r.arg}.json`, S.coin, r.arg);
+    if (r.name === "coin" && r.arg && S.coin[r.arg] && S.coin[r.arg].audit_chip && (ch(`audit/${r.arg}.json`) || !S.audit[r.arg])) await getOpt(`audit/${r.arg}.json`, S.audit, r.arg);
+    if (r.name === "home") for (const o of openPositions()) if (ch(`coin/${o.row.mint}.json`) || !S.coin[o.row.mint]) await getOpt(`coin/${o.row.mint}.json`, S.coin, o.row.mint);
     const am = r.name === "audit" ? (r.arg || auditMint()) : null;
     if (am && (ch(`audit/${am}.json`) || !S.audit[am])) await getOpt(`audit/${am}.json`, S.audit, am);
     if (r.name === "agents") for (const a of AGENTS) if (ch(`decisions/${a}.json`) || !S.decisions[a]) await getOpt(`decisions/${a}.json`, S.decisions, a);
@@ -361,32 +363,48 @@
     const rows = ((S.activity[0] && S.activity[0].rows) || []).slice(0, 5);
     const results = S.showSearch ? searchResults() : "";
     const html = navbar(S.showSearch ? `<div class="search"><input id="q" type="search" placeholder="Name, symbol or mint" value="${esc(S.search)}" autocomplete="off" autocapitalize="off"></div><div class="results">${results}</div>` : "") +
-      `<section class="balance"><div class="bigrow"><span class="big odo" aria-label="${esc(money(bal))}">${odo.html}</span>${st.paper ? '<span class="pill paper">PAPER</span>' : ""}</div>
+      `<section class="hero glass"><div class="herotop"><span class="ter">${st.paper ? "PAPER stack" : "Stack"}</span>${st.paper ? '<span class="pill paper">PAPER</span>' : ""}</div>
+       <div class="bigrow"><span class="big odo glow" aria-label="${esc(money(bal))}">${odo.html}</span></div>
        <div class="today"><span class="${today == null ? "sec" : today >= 0 ? "green" : "red"}">${today == null ? "—" : sgn(today)}</span><span class="sec">today</span>
-       ${mult != null ? `<span class="pill mult">${mult.toFixed(2)}×</span>` : ""}${st.balance_unpriced_positions ? `<span class="ter">${st.balance_unpriced_positions} position${st.balance_unpriced_positions > 1 ? "s" : ""} not priced yet</span>` : ""}</div></section>
+       ${mult != null ? `<span class="pill mult">${mult.toFixed(2)}×</span>` : ""}${st.balance_unpriced_positions ? `<span class="ter">${st.balance_unpriced_positions} position${st.balance_unpriced_positions > 1 ? "s" : ""} not priced yet</span>` : ""}</div>
       <div class="chartwrap"><canvas id="line"></canvas>${rng.points.length ? "" : '<div class="chartempty">Waiting for the first trade</div>'}</div>
       <div class="ranges">${["LIVE", "1H", "4H", "1D", "1W", "ALL"].map(r => `<button data-range="${r}" class="${r === S.range ? "on" : ""}">${r}</button>`).join("")}</div>
+      <div class="achips">${st.agents.map(a => `<a class="achip" href="#/agents"><i class="live ${esc(a.paused ? "paused" : a.status)}"></i>${TITLE[a.name]}</a>`).join("")}</div></section>
+      <div class="sh"><h2>Open positions</h2><span class="ter sm">${openPositions().length || ""}</span></div>
+      <div class="list glass">${openPositions().length ? openPositions().map(posRow).join("") : '<div class="empty">No open positions</div>'}</div>
       <div class="sh"><h2>Agents · ${st.running} running</h2></div>
       <div class="carousel">${st.agents.map(agentCard).join("")}</div>
-      <div class="sh"><h2>New coins</h2><span class="sec" style="font-size:15px">${(st.new_coins || []).length ? "tap for the chart" : ""}</span></div>
-      <div class="list">${(st.new_coins || []).length ? st.new_coins.slice(0, 8).map(newCoinRow).join("") : '<div class="empty">Listening for graduations</div>'}</div>
+      <div class="sh"><h2>New coins</h2><span class="ter sm">${(st.new_coins || []).length ? "live" : ""}${(st.new_coins || []).length ? '<i class="live running" style="margin-left:6px"></i>' : ""}</span></div>
+      <div class="list glass">${(st.new_coins || []).length ? st.new_coins.slice(0, 8).map(newCoinRow).join("") : '<div class="empty">Listening for graduations</div>'}</div>
       <div class="sh"><h2>Activity</h2><a href="#/activity">See all</a></div>
-      <div class="list">${rows.length ? rows.map(actRow).join("") : '<div class="empty">Nothing yet tonight</div>'}</div>`;
+      <div class="list glass">${rows.length ? rows.map(actRow).join("") : '<div class="empty">Nothing yet tonight</div>'}</div>`;
     return { html, after() {
       if (odo.roll) runOdometer();
       chartPrev = DeskChart.line(document.getElementById("line"), { points: rng.points, marks: rng.marks, start: S.chart && S.chart.start_value }, chartPrev);
       afterCards();
     } };
   }
+  function openPositions() {
+    const rows = S.activity.flatMap(p => p.rows || []), latest = new Map();
+    rows.forEach(r => { if (r.mint && ["bought", "sold", "stopped"].includes(r.kind) && !latest.has(r.mint)) latest.set(r.mint, r); });
+    return [...latest.values()].filter(r => r.kind === "bought").map(r => ({ row: r, coin: S.coin[r.mint] }));
+  }
+  function posRow(o) {
+    const r = o.row, c = o.coin, p = c && c.position, since = p && p.since_entry_pct;
+    const name = (r.title || "").replace(/^Bought /, "");
+    return `<a class="row" href="${coinHref(r.mint)}">${logo(name, r.logo || (c && c.logo), 40)}<span class="main"><div class="t">${esc(name)}</div>
+      <div class="s">${p ? money(p.sizeUsd) + " in · entry " + price(p.entryPrice) : esc(r.subtitle || "")}</div></span>
+      <span class="v">${since == null ? '<span class="ter">—</span>' : `<span class="cpill ${since >= 0 ? "up" : "down"}">${sgn(since, 1)}</span>`}</span></a>`;
+  }
   const STAGE = { watching: ["Watching", "cyan"], killed: ["Skipped", "ter"], passed: ["→ Auditor", "cyan"], auditing: ["Auditing", "cyan"],
                   rejected: ["Rejected", "red"], cleared: ["Cleared", "green"], holding: ["Holding", "green"], traded: ["Traded", "sec"] };
   function newCoinRow(c) {
     const [lab, cls] = STAGE[c.stage] || [c.stage, "sec"];
-    const ch = c.p5 == null ? "" : `<span class="${c.p5 >= 0 ? "green" : "red"}">${sgn(c.p5, 1)}</span>`;
+    const ch = c.p5 == null ? "" : `<span class="cpill ${c.p5 >= 0 ? "up" : "down"}">${sgn(c.p5, 1)}</span>`;
     return `<a class="row coinrow${pop("n" + c.mint)}" href="${coinHref(c.mint)}">${logo(c.name, c.logo, 40)}
       <span class="main"><div class="t">${esc(c.name)} <span class="ter" style="font-size:14px">${esc(c.symbol || "")}</span></div>
-      <div class="s">${ago(c.migrated_at)} · mc ${kfmt(c.marketCap)} ${ch}</div></span>
-      <span class="v"><span class="stage ${cls}">${esc(lab)}</span>${c.reason ? `<div class="s ter" style="font-size:12px">${esc(c.reason)}</div>` : ""}</span></a>`;
+      <div class="s">${ago(c.migrated_at)} · MC ${kfmt(c.marketCap)} · Liq ${kfmt(c.liquidityUsd)}</div></span>
+      <span class="v">${ch}<span class="stage ${cls}">${esc(lab)}</span>${c.reason ? `<div class="s ter" style="font-size:12px">${esc(c.reason)}</div>` : ""}</span></a>`;
   }
   function knownCoins() {
     const m = new Map();
@@ -498,34 +516,63 @@
 
   // ---------- real OHLCV: GeckoTerminal public API (no key, CORS *), fetched by the phone; ~30 calls/min/IP limit ----------
   // One request per coin per 30s, at most one in flight, 60s back-off after a 429/error. Desk prices are the fallback.
-  const OHLC = {}; let gtBusy = false, gtPauseUntil = 0;
-  const TFS = { "1m": 1, "5m": 5, "15m": 15 };
+  const OHLC = {}; let gtBusy = false, gtPauseUntil = 0, gtQueue = [];
+  // timeframe -> [GeckoTerminal endpoint, aggregate, seconds per candle]
+  const TFS = { "1m": ["minute", 1, 60], "5m": ["minute", 5, 300], "15m": ["minute", 15, 900], "1h": ["hour", 1, 3600] };
   const tfFor = (mint, ageH) => S.tf[mint] || (ageH != null && ageH > 3 ? "5m" : "1m");
   const ohlcKey = (mint, ageH) => mint + "|" + tfFor(mint, ageH);
   function gtWanted(mint, pool, ageH) {
-    const key = ohlcKey(mint, ageH), o = OHLC[key];
-    if (!pool || gtBusy || Date.now() < gtPauseUntil || (o && Date.now() - o.at < 30000)) return;
+    const tf = tfFor(mint, ageH), key = mint + "|" + tf, o = OHLC[key];
+    if (!pool || (o && (o.loading || Date.now() - o.at < 30000))) return;
+    if (gtBusy || Date.now() < gtPauseUntil) {                       // queue it: runs as soon as the slot frees / back-off ends
+      if (!gtQueue.some(q => q[0] === key)) gtQueue.push([key, mint, pool, ageH]);
+      OHLC[key] = Object.assign(o || { cs: [] }, { loading: true, waitUntil: gtPauseUntil });
+      if (!gtBusy) setTimeout(gtNext, Math.max(0, gtPauseUntil - Date.now()) + 50);
+      return;
+    }
     gtBusy = true;
-    const tf = { agg: TFS[tfFor(mint, ageH)], label: tfFor(mint, ageH) };
-    const url = `https://api.geckoterminal.com/api/v2/networks/solana/pools/${encodeURIComponent(pool)}/ohlcv/minute?aggregate=${tf.agg}&limit=150&currency=usd`;
+    const [ep, agg, step] = TFS[tf];
+    OHLC[key] = Object.assign(o || { cs: [] }, { loading: true });
+    const url = `https://api.geckoterminal.com/api/v2/networks/solana/pools/${encodeURIComponent(pool)}/ohlcv/${ep}?aggregate=${agg}&limit=150&currency=usd`;
     fetch(url, { headers: { Accept: "application/json" }, referrerPolicy: "no-referrer", cache: "no-store" })
-      .then(r => { if (r.status !== 200) throw new Error("HTTP " + r.status); return r.json(); })
+      .then(r => { if (r.status !== 200) { const e = new Error("HTTP " + r.status); e.status = r.status; throw e; } return r.json(); })
       .then(j => {
         const l = (((j || {}).data || {}).attributes || {}).ohlcv_list || [];
         const cs = l.map(x => ({ t: +x[0], o: +x[1], h: +x[2], l: +x[3], c: +x[4], vol: +x[5] }))
           .filter(c => [c.t, c.o, c.h, c.l, c.c].every(isFinite)).sort((a, b) => a.t - b.t);
-        OHLC[key] = { at: Date.now(), cs, label: tf.label, step: tf.agg * 60 };
+        OHLC[key] = { at: Date.now(), cs, label: tf, step, loading: false };
       })
-      .catch(() => { gtPauseUntil = Date.now() + 60000; OHLC[key] = Object.assign(OHLC[key] || { cs: [] }, { at: Date.now(), failed: true }); })
-      .finally(() => { gtBusy = false; if (route().name === "coin" && decodeURIComponent(route().arg || "") === mint) render(); });
+      .catch(e => {
+        if (e && e.status === 429) {                                   // rate limited: back off 15s, keep it queued (shows "retry in Ns")
+          gtPauseUntil = Date.now() + 15000;
+          OHLC[key] = Object.assign(OHLC[key] || { cs: [] }, { at: 0, loading: true, waitUntil: gtPauseUntil });
+          if (!gtQueue.some(q => q[0] === key)) gtQueue.push([key, mint, pool, ageH]);
+        } else OHLC[key] = Object.assign(OHLC[key] || { cs: [] }, { at: Date.now(), loading: false, failed: true });   // unknown pool etc: desk prices, retry in 30s
+      })
+      .finally(() => { gtBusy = false; setTimeout(gtNext, Math.max(0, gtPauseUntil - Date.now()) + 50);
+        if (route().name === "coin" && decodeURIComponent(route().arg || "") === mint) render(); });
+  }
+  function gtNext() {
+    if (gtBusy || Date.now() < gtPauseUntil || !gtQueue.length) return;
+    const r = route(), cur = r.name === "coin" ? decodeURIComponent(r.arg || "") : null;
+    gtQueue = gtQueue.filter(q => q[1] === cur);                       // only the coin on screen
+    const q = gtQueue.shift(); if (!q) return;
+    if (OHLC[q[0]]) { OHLC[q[0]].loading = false; OHLC[q[0]].at = 0; }
+    gtWanted(q[1], q[2], q[3]);
   }
   // Desk fallback: db.prices 1-minute OHLC. A minute with one sample has o=c; open it at the previous close so the
   // body shows the move (both are real prices). Minutes with no sample are not drawn.
-  function deskCandles(list) {
-    const out = []; let prev = null;
+  function deskCandles(list, step) {
+    const one = []; let prev = null;
     (list || []).forEach(c => { if (c.c == null) return; const t = typeof c.t === "number" ? c.t : Date.parse(c.t) / 1000;
       const o = prev != null && c.o === c.c ? prev : c.o;
-      out.push({ t, o, h: Math.max(c.h, o), l: Math.min(c.l, o), c: c.c, vol: c.vol }); prev = c.c; });
+      one.push({ t, o, h: Math.max(c.h, o), l: Math.min(c.l, o), c: c.c, vol: c.vol }); prev = c.c; });
+    if (!step || step <= 60) return one;
+    const out = [];                                                    // aggregate 1m desk candles into the chosen timeframe
+    one.forEach(c => { const b = Math.floor(c.t / step) * step, last = out[out.length - 1];
+      if (last && last.t === b) { last.h = Math.max(last.h, c.h); last.l = Math.min(last.l, c.l); last.c = c.c;
+        last.vol = (last.vol || 0) + (c.vol > 0 ? c.vol : 0); }
+      else out.push({ t: b, o: c.o, h: c.h, l: c.l, c: c.c, vol: c.vol > 0 ? c.vol : 0 }); });
     return out;
   }
   const dash = v => v == null ? "—" : v;
@@ -537,9 +584,11 @@
     return last && (c.price == null || last.t + 60 > deskT) ? last.c : c.price;
   }
   function chartSrc(mint, c) {
-    const g = OHLC[ohlcKey(mint, c.age_h)], cur = tfFor(mint, c.age_h);
-    const src = g && g.cs && g.cs.length >= 3 ? "GeckoTerminal" : (c.candles || []).length >= 3 ? "desk prices · 1m" : "";
-    return `<span class="tfs">${c.pool ? Object.keys(TFS).map(k => `<button data-tf="${k}" class="${k === cur ? "on" : ""}">${k}</button>`).join("") : ""}</span><span>${src}</span>`;
+    const cur = tfFor(mint, c.age_h), g = OHLC[mint + "|" + cur];
+    const wait = g && g.waitUntil && g.waitUntil > Date.now() ? Math.ceil((g.waitUntil - Date.now()) / 1000) : 0;
+    const src = g && g.cs && g.cs.length ? `${cur} · GeckoTerminal` : g && g.loading ? (wait ? `GeckoTerminal busy · retry in ${wait}s` : `Loading ${cur}…`)
+      : (c.candles || []).length ? `${cur} · desk prices` : "";
+    return `<span class="tfs">${Object.keys(TFS).map(k => `<button type="button" data-tf="${k}" class="${k === cur ? "on" : ""}" aria-pressed="${k === cur}">${k}</button>`).join("")}</span><span class="srcl">${esc(src)}</span>`;
   }
   function coinScreen(mint) {
     const loading = backbar("Home") + `<div class="gut">${sk(34, "60%")}${sk(18, "40%", "margin-top:8px")}${sk(56, "50%", "margin-top:14px")}</div>
@@ -552,42 +601,54 @@
     const chipOk = c.audit_chip === "8/8";
     const since = p && p.since_entry_pct;
     const left = x ? `${Math.floor(x.timeout_left_s / 3600)}h ${Math.floor(x.timeout_left_s % 3600 / 60)}m` : null;
+    const chg = since != null ? [since, "since entry"] : c.stats.change24h != null ? [c.stats.change24h, "24h"] : c.stats.change1h != null ? [c.stats.change1h, "1h"] : null;
+    const IC = { mc: '<path d="M4 19V9m5 10V5m5 14v-7m5 7V3"/>', liq: '<path d="M12 3s6 6.5 6 11a6 6 0 0 1-12 0c0-4.5 6-11 6-11z"/>',
+      vol: '<path d="M3 17l5-5 4 4 8-9"/><path d="M15 7h5v5"/>', hold: '<circle cx="9" cy="8" r="3"/><path d="M3 20c0-3.3 2.7-6 6-6s6 2.7 6 6"/><path d="M16 4a3 3 0 0 1 0 6m2 4c2 .7 3 2.6 3 6"/>',
+      v1: '<circle cx="12" cy="12" r="8"/><path d="M12 8v4l3 2"/>', bs: '<path d="M7 17V7l-3 3m3-3 3 3M17 7v10l-3-3m3 3 3-3"/>' };
+    const tile = (ic, k, v) => `<div class="tile"><svg viewBox="0 0 24 24">${IC[ic]}</svg><div class="k">${k}</div><div class="vv">${v}</div></div>`;
+    const au = S.audit[mint];
+    const audit = au && au.layers ? `<div class="sh"><h2>Audit</h2><a href="#/audit/${encodeURIComponent(mint)}">${esc(c.audit_chip || "")} ›</a></div>
+      <div class="list glass checklist">${au.layers.map(l => `<div class="ck"><span class="tk ${l.pass === true ? "ok" : l.pass === false ? "bad" : "nc"}">${l.pass === true ? "✓" : l.pass === false ? "✕" : "–"}</span>
+        <span class="cn">${l.n} · ${esc(l.name)}</span><span class="cv ${l.pass === false ? "red" : l.pass == null ? "ter" : ""}">${esc(l.value == null ? "—" : l.value)}</span></div>`).join("")}</div>` : "";
     const html = backbar("Home") + `<div class="coinhead">
-        <div class="cname">${logo(c.name || mint, c.logo, 44)}${esc(c.name || mint.slice(0, 4) + "…" + mint.slice(-3))}${c.audit_chip ? `<a href="#/audit/${encodeURIComponent(mint)}" class="chip ${chipOk ? "ok" : "bad"}">🛡 ${esc(c.audit_chip)}</a>` : ""}</div>
-        <div class="sec">${esc(c.symbol || "")} · ${esc(c.chain)} · ${c.age_h == null ? "age n/a" : c.age_h < 1 ? Math.round(c.age_h * 60) + "m old" : Math.floor(c.age_h) + "h old"}</div>
-        <div class="big pricebig" style="font-size:44px;margin-top:10px">${tick("p" + mint, livePrice(mint, c), price)}</div>
-        ${since != null ? `<div class="${since >= 0 ? "green" : "red"}">${since >= 0 ? "▲" : "▼"} ${Math.abs(since).toFixed(2)}% since entry</div>` : ""}
+        <div class="cname">${logo(c.name || mint, c.logo, 48)}<span class="cnm"><span>${esc(c.name || mint.slice(0, 4) + "…" + mint.slice(-3))}</span>
+          <span class="sec sm">${esc(c.symbol || "")} · ${esc(c.chain)} · ${c.age_h == null ? "age —" : c.age_h < 1 ? Math.round(c.age_h * 60) + "m old" : Math.floor(c.age_h) + "h old"}</span></span>
+          ${c.audit_chip ? `<a href="#/audit/${encodeURIComponent(mint)}" class="chip ${chipOk ? "ok" : "bad"}">🛡 ${esc(c.audit_chip)}</a>` : ""}</div>
+        <div class="pricerow"><span class="big pricebig glow">${tick("p" + mint, livePrice(mint, c), price)}</span>
+          ${chg ? `<span class="cpill lg2 ${chg[0] >= 0 ? "up" : "down"}">${chg[0] >= 0 ? "▲" : "▼"} ${Math.abs(chg[0]).toFixed(chg[1] === "since entry" ? 2 : 1)}% <span class="ter">${chg[1]}</span></span>` : ""}</div>
       </div>
-      <div class="chartwrap gut" style="position:relative"><canvas id="candles"></canvas><i id="breath" class="breath" hidden></i></div>
-      <div class="chsrc">${chartSrc(mint, c)}</div>
-      <div class="stats"><div><div class="k">Market cap</div><div class="vv">${kfmt(c.stats.marketCap)}</div></div>
-        <div><div class="k">Liquidity</div><div class="vv">${kfmt(c.stats.liquidityUsd)}</div></div>
-        <div><div class="k">24h volume</div><div class="vv">${kfmt(c.stats.volume24h)}</div></div>
-        <div><div class="k">Holders</div><div class="vv">${c.stats.holders == null ? "—" : c.stats.holders.toLocaleString()}</div></div>
-        <div><div class="k">1h volume</div><div class="vv">${kfmt(c.stats.volume1h)}</div></div>
-        <div><div class="k">1h buys / sells</div><div class="vv">${c.stats.buys1h == null ? "—" : c.stats.buys1h + " / " + dash(c.stats.sells1h)}</div></div></div>
-      <div class="chg">${[["5m", c.stats.change5m], ["1h", c.stats.change1h], ["24h", c.stats.change24h]].map(([k, v]) =>
+      <div class="chartcard glass" id="chartcard"><div class="chsrc">${chartSrc(mint, c)}</div>
+        <div class="chartwrap" style="position:relative"><canvas id="candles"></canvas><i id="breath" class="breath" hidden></i><div class="chshim"></div></div></div>
+      <div class="tiles">${tile("mc", "Market cap", kfmt(c.stats.marketCap))}${tile("liq", "Liquidity", kfmt(c.stats.liquidityUsd))}
+        ${tile("vol", "24h volume", kfmt(c.stats.volume24h))}${tile("hold", "Holders", c.stats.holders == null ? "—" : c.stats.holders.toLocaleString())}
+        ${tile("v1", "1h volume", kfmt(c.stats.volume1h))}${tile("bs", "1h buys / sells", c.stats.buys1h == null ? "—" : c.stats.buys1h + " / " + dash(c.stats.sells1h))}</div>
+      <div class="chg glass">${[["5m", c.stats.change5m], ["1h", c.stats.change1h], ["24h", c.stats.change24h]].map(([k, v]) =>
         `<div><span class="k">${k}</span><span class="${v == null ? "ter" : v >= 0 ? "green" : "red"}">${v == null ? "—" : sgn(v, 1)}</span></div>`).join("")}</div>
-      <div class="note mono">${esc(mint)}</div>
-      ${p ? `<div class="card"><h3>Your position · ${money(p.sizeUsd)} in · ${esc(p.agent)}</h3>
+      ${p ? `<div class="card glass"><h3>Your position · ${money(p.sizeUsd)} in · ${esc(p.agent)}</h3>
           <div class="kv"><span class="sec">Entry</span><span>${price(p.entryPrice)}</span></div>
           ${p.open ? "" : `<div class="kv"><span class="sec">Exit · ${esc(p.exitReason)}</span><span>${price(p.exitPrice)}</span></div>
           <div class="kv"><span class="sec">PnL after fees</span><span class="${p.pnlUsd >= 0 ? "green" : "red"}">${money(p.pnlUsd)}</span></div>`}</div>` : ""}
-      ${x ? `<div class="card"><h3>Exit</h3>
+      ${x ? `<div class="card glass"><h3>Exit</h3>
           <div class="kv"><span class="sec">Stop line · -${x.stop_pct}%</span><span class="red">${price(x.stop_line)}</span></div>
           <div class="kv"><span class="sec">Trail line · ${x.trail_pct}%</span><span class="${x.trail_active ? "green" : "ter"}">${x.trail_active ? price(x.trail_line) : "not active yet"}</span></div>
           <div class="kv"><span class="sec">Time left to timeout</span><span>${left}</span></div></div>` : ""}
-      <div class="spacer"></div>${safeUrl(c.link) ? `<a class="cta ${p && p.open ? "sell" : ""}" href="${esc(c.link)}" target="_blank" rel="noopener">${esc(c.button)}</a>` : ""}`;
+      ${audit}
+      <div class="note mono">${esc(mint)}</div>
+      <div class="spacer"></div>${safeUrl(c.link) ? `<div class="ctabar"><a class="cta ${p && p.open ? "sell" : ""}" href="${esc(c.link)}" target="_blank" rel="noopener">${esc(c.button)}</a></div>` : ""}`;
     return { html, after() {
       gtWanted(mint, c.pool, c.age_h);
-      const g = OHLC[ohlcKey(mint, c.age_h)], gt = g && g.cs && g.cs.length >= 3 ? g.cs : null;
+      const tf = tfFor(mint, c.age_h), step = TFS[tf][2], g = OHLC[mint + "|" + tf], gt = g && g.cs && g.cs.length ? g.cs : null;
       const cv = document.getElementById("candles");
       if (cv && S.chartOff[mint] != null) cv._st = { off: S.chartOff[mint] };
-      const lastC = DeskChart.candles(cv, gt || deskCandles(c.candles), x ? x.risk_trailing_stop : null,
-                        { loading: !g && !!c.pool, step: gt ? g.step : 60 });
+      const wrap = document.getElementById("chartcard");
+      if (wrap) wrap.classList.toggle("loading", !!(g && g.loading && !gt));
+      const lastC = DeskChart.candles(cv, gt || deskCandles(c.candles, step), x ? x.risk_trailing_stop : null,
+                        { loading: !!c.pool && (!g || g.loading), step, min: 1 });
       if (cv) cv.addEventListener("pointerup", () => { S.chartOff[mint] = cv._st.off; });
       breathe(lastC);
-      view.querySelectorAll("[data-tf]").forEach(b => b.onclick = () => { S.tf[mint] = b.dataset.tf; S.chartOff[mint] = 0; render(); });
+      view.querySelectorAll("[data-tf]").forEach(b => b.onclick = e => { e.preventDefault(); if (S.tf[mint] === b.dataset.tf) return;
+        S.tf[mint] = b.dataset.tf; S.chartOff[mint] = 0; const cvs = document.getElementById("candles"); if (cvs) { cvs._st = { off: 0 }; cvs._lastC = null; }
+        render(); });
     } };
   }
 
@@ -649,6 +710,8 @@
     tickOffline();
     const r = route();
     document.querySelectorAll(".tab").forEach(t => t.classList.toggle("on", t.dataset.tab === r.name || (r.name === "coin" || r.name === "audit") && t.dataset.tab === "home"));
+    const tabs = [...document.querySelectorAll(".tab")], on = tabs.findIndex(t => t.classList.contains("on")), ind = document.getElementById("tabind");
+    if (ind && on >= 0) ind.style.transform = `translateX(${on * 100}%)`;
     if (!BASE) { if (!document.getElementById("gb")) { view.innerHTML = gate(); bindGate(); } document.getElementById("tabbar").hidden = true; return; }
     const out = r.name === "agents" ? agentsTab() : r.name === "activity" ? activityTab() : r.name === "account" ? accountTab()
       : r.name === "coin" && r.arg ? coinScreen(decodeURIComponent(r.arg)) : r.name === "audit" ? auditScreen(r.arg && decodeURIComponent(r.arg)) : home();

@@ -140,12 +140,14 @@
     const real = (list || []).filter(c => c && c.o != null && c.h != null && c.l != null && c.c != null && c.h > 0);
     const st = canvas._st || (canvas._st = { off: 0 });
     canvas._draw = () => candles(canvas, list, exitLine, opts);
-    if (real.length < 3) {
+    if (real.length < (opts.min || 3)) {
       ctx.fillStyle = C.sec; ctx.font = "15px " + FONT; ctx.textAlign = "center";
       ctx.fillText(opts.loading ? "Loading chart…" : "Chart builds as trades come in", w / 2, h / 2 - 10); ctx.textAlign = "left";
       canvas._last = null; return null;
     }
     const all = fillGaps(real, opts.step);
+    canvas._info = { real: real.length, slots: all.length, step: opts.step || null, first: real[0].t, last: real[real.length - 1].t,
+                     sig: real.slice(-5).map(c => c.c.toPrecision(5)).join(",") };
     const AX = 64, plotW = w - AX, top = 10, priceBot = Math.round(h * 0.70), volTop = Math.round(h * 0.75), volBot = h - 22;
     const fit = Math.floor(plotW / SLOT);
     st.off = Math.max(0, Math.min(st.off, Math.max(0, all.length - fit)));
