@@ -21,6 +21,16 @@
   const keepD = () => { if (!DP || FIXTURE || hashD()) return; const h = location.hash || "#/home";
     history.replaceState(null, "", location.pathname + location.search + h + (h.includes("?") ? "&" : "?") + "d=" + encodeURIComponent(DP)); };
   keepD();
+  // Home Screen apps on iPhone open the manifest start_url and have their own storage, so the start_url must carry d
+  if (DP && !FIXTURE) { try {
+    const root = new URL("./", location.href).href;
+    const m = { name: "Grok Bot", short_name: "Grok Bot", start_url: root + "#/home?d=" + encodeURIComponent(DP), scope: root,
+      display: "standalone", background_color: "#000000", theme_color: "#000000",
+      icons: [{ src: root + "icons/icon-192.png", sizes: "192x192", type: "image/png" }, { src: root + "icons/icon-512.png", sizes: "512x512", type: "image/png" },
+              { src: root + "icons/apple-touch-icon.png", sizes: "180x180", type: "image/png" }] };
+    const mf = document.getElementById("mf");
+    if (mf) mf.href = "data:application/manifest+json," + encodeURIComponent(JSON.stringify(m));
+  } catch (e) {} }
   const BASE = FIXTURE ? "/" + FIXTURE.replace(/[^\w-]/g, "") + "/" : (DP ? SUPA + encodeURIComponent(DP) + "/" : null);
 
   const S = { state: null, chart: null, account: null, activity: [], coin: {}, audit: {}, decisions: {},
