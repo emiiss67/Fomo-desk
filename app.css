@@ -176,6 +176,44 @@ canvas{display:block;width:100%}
 .gate h1{font-size:28px;margin:0 0 10px}
 .gate p{color:var(--sec);line-height:1.45;margin:0}
 
+/* ---- polish: logos, pop-in, transitions, confetti ---- */
+.lg{position:relative;flex:0 0 var(--s);width:var(--s);height:var(--s);border-radius:50%;overflow:hidden;display:inline-flex;align-items:center;justify-content:center;
+  background:hsl(var(--h) 70% 22%);color:hsl(var(--h) 90% 72%);font-weight:700;font-size:calc(var(--s) * .44);line-height:1;vertical-align:middle}
+.lg img{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;background:var(--card2);animation:imgin .3s ease-out}
+@keyframes imgin{from{opacity:0}to{opacity:1}}
+.lgw{position:relative;flex:0 0 36px;display:inline-flex}
+.lgw .badge{position:absolute;right:-4px;bottom:-4px;width:18px;height:18px;border-radius:9px;font-size:10px;font-weight:800;display:flex;align-items:center;justify-content:center;
+  border:2px solid var(--card);background:var(--card2)}
+.badge.bought{background:var(--blue);color:#fff}.badge.sold{background:var(--green);color:#000}.badge.stopped,.badge.rejected{background:var(--red);color:#fff}
+.cl{display:inline-flex;align-items:center;gap:6px;color:inherit;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.feed .fr{align-items:center;color:inherit;border-radius:8px}
+.feed .fr .lg{margin-right:-2px}
+.feed .fr .n{flex:1}
+.coinrow .v{display:flex;flex-direction:column;align-items:flex-end}
+.stage{font-size:13px;font-weight:600}
+.coinhead .cname{color:inherit}
+.chg{display:flex;gap:1px;margin:1px var(--g) 0;background:var(--sep);border-radius:0 0 14px 14px;overflow:hidden}
+.chg div{flex:1;background:var(--card);padding:10px 14px;display:flex;justify-content:space-between;font-size:15px}
+.chg .k{color:var(--sec);font-size:13px}
+.stats{border-radius:14px 14px 0 0}
+.note.mono{font-family:var(--mono);font-size:11px;color:var(--ter);word-break:break-all;padding-top:10px}
+/* pump.fun-style pop-in: scale up past 1, flash, settle */
+.pop{animation:popin .7s cubic-bezier(.2,1.4,.4,1) both}
+.row.pop{animation:popin .7s cubic-bezier(.2,1.4,.4,1) both, flash 1.2s ease-out}
+@keyframes popin{0%{transform:scale(.6) translateY(-8px);opacity:0}55%{transform:scale(1.06);opacity:1}100%{transform:none}}
+@keyframes flash{0%,30%{background:rgba(0,211,90,.28)}100%{background:transparent}}
+/* screen transitions */
+.view.enter{animation:enter .26s cubic-bezier(.2,.8,.2,1)}
+@keyframes enter{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:none}}
+/* press feedback + smooth state changes */
+a.row,a.acard,.feed .fr,.tab,.cta,.ranges button,.gbtn,.chip{transition:transform .15s ease,background-color .2s ease,opacity .2s ease;-webkit-tap-highlight-color:transparent}
+a.row:active,.feed .fr:active{background:var(--card2);transform:scale(.985)}
+a.acard:active,.cta:active,.gbtn:active{transform:scale(.97)}
+.tab:active svg{transform:scale(.88)}.tab svg{transition:transform .15s ease}
+.ranges button{transition:background-color .2s ease,color .2s ease}
+.sd{transition:background-color .4s ease}
+.confetti{position:fixed;inset:0;width:100vw;height:100vh;pointer-events:none;z-index:50}
+
 @media (prefers-reduced-motion: reduce){
   *{transition:none!important;animation:none!important}
 }

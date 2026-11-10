@@ -50,6 +50,52 @@
   const card = n => S.state && S.state.agents.find(a => a.name === n);
   const route = () => { const h = location.hash.replace(/^#\/?/, "").split("?")[0].split("/"); return { name: h[0] || "home", arg: h[1] || null }; };
   const sk = (h, w, extra) => `<div class="sk" style="height:${h}px;${w ? "width:" + w + ";" : ""}${extra || ""}"></div>`;
+  // coin logo: DexScreener info.imageUrl (server checks it is on DexScreener's CDN); no logo / load error -> letter
+  const HUES = [200, 145, 48, 330, 270, 20, 180, 0];
+  const small = u => u.replace(/width=\d+&height=\d+/, "width=128&height=128");
+  function logo(name, url, size, extraCls) {
+    const n = String(name || "?").replace(/[^\p{L}\p{N}]/gu, "") || "?";
+    let h = 0; for (const ch of n) h = (h * 31 + ch.codePointAt(0)) >>> 0;
+    const u = url && safeUrl(url);
+    return `<span class="lg ${extraCls || ""}" style="--s:${size || 36}px;--h:${HUES[h % HUES.length]}">${esc(n[0].toUpperCase())}` +
+      (u ? `<img src="${esc(small(u))}" alt="" loading="lazy" decoding="async" referrerpolicy="no-referrer" onerror="this.remove()">` : "") + "</span>";
+  }
+  const coinHref = m => "#/coin/" + encodeURIComponent(m);
+  // pump.fun-style pop-in: a coin that shows up after the first load pops in once (only in the render it first appears)
+  const seenAt = new Map(); let seenReady = false;
+  function pop(key) {
+    if (!key) return "";
+    const now = Date.now();
+    if (!seenAt.has(key)) seenAt.set(key, seenReady ? now : 0);
+    return seenReady && now - seenAt.get(key) < 1500 ? " pop" : "";
+  }
+  // confetti on a profitable closed trade (a new "Sold" activity row with a + value), once per row
+  const cheered = new Set(); let cheerReady = false;
+  function checkConfetti() {
+    const rows = (S.activity[0] && S.activity[0].rows) || [];
+    const wins = rows.filter(r => r.kind === "sold" && /^\+/.test(String(r.value || "")));
+    const fresh = wins.filter(r => !cheered.has(r.id));
+    wins.forEach(r => cheered.add(r.id));
+    if (cheerReady && fresh.length && !RM()) confetti();
+    cheerReady = true;
+  }
+  function confetti() {
+    const c = document.createElement("canvas"); c.className = "confetti"; document.body.appendChild(c);
+    const dpr = window.devicePixelRatio || 1, W = innerWidth, H = innerHeight;
+    c.width = W * dpr; c.height = H * dpr; const x = c.getContext("2d"); x.scale(dpr, dpr);
+    const cols = ["#00d35a", "#ffd60a", "#64d2ff", "#ff6b9a", "#ffffff", "#ff9f0a"];
+    const ps = Array.from({ length: 140 }, (_, i) => ({ x: W / 2 + (Math.random() - .5) * 80, y: H * .35, vx: (Math.random() - .5) * 13,
+      vy: -Math.random() * 13 - 4, r: Math.random() * Math.PI, vr: (Math.random() - .5) * .3, w: 6 + Math.random() * 6, h: 4 + Math.random() * 6, c: cols[i % cols.length] }));
+    const t0 = performance.now();
+    const step = t => { const k = (t - t0) / 1000; x.clearRect(0, 0, W, H);
+      ps.forEach(p => { p.vy += .35; p.vx *= .99; p.x += p.vx; p.y += p.vy; p.r += p.vr;
+        x.save(); x.translate(p.x, p.y); x.rotate(p.r); x.globalAlpha = Math.max(0, 1 - Math.max(0, k - 1.6)); x.fillStyle = p.c; x.fillRect(-p.w / 2, -p.h / 2, p.w, p.h); x.restore(); });
+      if (k < 2.6) requestAnimationFrame(step); else c.remove(); };
+    requestAnimationFrame(step);
+    if (navigator.vibrate) try { navigator.vibrate(30); } catch (e) {}
+  }
+  const ago = iso => { if (!iso) return ""; const m = Math.max(0, Math.round((Date.now() - new Date(iso)) / 60000)); return m < 60 ? m + "m" : Math.floor(m / 60) + "h"; };
+
   function toast(t) { const el = document.getElementById("toast"); el.textContent = t; el.hidden = false; clearTimeout(toast.t); toast.t = setTimeout(() => el.hidden = true, 1800); }
 
   // ---------- fetch ----------
@@ -84,6 +130,7 @@
         S.chart = chart; S.account = account;
         if (S.activity[0] !== act) S.activity = [act];
         S.state = st; changedSomething = true;
+        checkConfetti();
         await loadRoute(first ? null : changed);
       }
       if (S.err) changedSomething = true;
@@ -150,8 +197,11 @@
     const href = r.mint ? (r.opens === "coin" ? `#/coin/${encodeURIComponent(r.mint)}` : `#/audit/${encodeURIComponent(r.mint)}`) : null;
     const v = esc(r.value || "");
     const vcls = r.kind === "sold" ? (String(r.value).startsWith("-") ? "red" : "green") : r.kind === "stopped" ? "red" : r.kind === "rejected" ? "ter" : "";
-    const inner = `<span class="ic ${r.kind}">${ic}</span><span class="main"><div class="t">${esc(r.title)}</div><div class="s">${esc(r.subtitle)}</div></span><span class="v ${vcls}">${v}</span>`;
-    return href ? `<a class="row" href="${href}">${inner}</a>` : `<div class="row">${inner}</div>`;
+    const name = (r.title || "").replace(/^(Bought|Sold|Stopped|Rejected) /, "");
+    const icon = r.mint ? `<span class="lgw">${logo(name, r.logo, 36)}<span class="badge ${r.kind}">${ic}</span></span>` : `<span class="ic ${r.kind}">${ic}</span>`;
+    const inner = `${icon}<span class="main"><div class="t">${esc(r.title)}</div><div class="s">${esc(r.subtitle)}</div></span><span class="v ${vcls}">${v}</span>`;
+    const pc = pop("a" + r.id);
+    return href ? `<a class="row${pc}" href="${href}">${inner}</a>` : `<div class="row${pc}">${inner}</div>`;
   }
   function statusDot(a) { return `<i class="sd ${esc(a.status)}"></i>`; }
 
@@ -160,8 +210,8 @@
     const head = `<div class="ah">${statusDot(a)}<span class="${COLOR[a.name]}">${TITLE[a.name]}</span><span class="ter" style="margin-left:auto;font-weight:400">${a.paused ? "paused" : esc(a.status)}</span></div>`;
     if (a.name === "scanner") {
       const feed = (a.feed || []).slice(0, 5).map(f => f.verdict === "kill"
-        ? `<div class="fr killed"><span class="n">${esc(f.name)}</span><span class="r">${esc(f.reason)}</span></div>`
-        : `<div class="fr"><span class="n">${esc(f.name)} · liq ${kfmt(f.liquidityUsd)}</span><span class="cyan">→ auditor</span></div>`).join("");
+        ? `<a class="fr killed${pop("f" + f.mint)}" href="${coinHref(f.mint)}">${logo(f.name, f.logo, 20)}<span class="n">${esc(f.name)}</span><span class="r">${esc(f.reason)}</span></a>`
+        : `<a class="fr${pop("f" + f.mint)}" href="${coinHref(f.mint)}">${logo(f.name, f.logo, 20)}<span class="n">${esc(f.name)} · liq ${kfmt(f.liquidityUsd)}</span><span class="cyan">→ auditor</span></a>`).join("");
       return `<div class="acard">${head}<div class="stat">${a.pools} pools</div>
         ${feed ? `<div class="feed">${feed}</div>` : `<div class="sub">Listening for graduations</div>`}</div>`;
     }
@@ -170,14 +220,14 @@
       const strips = (c ? c.strips : Array(8).fill(null)).map(p => `<i class="${p === true ? "ok" : p === false ? "bad" : ""}"></i>`).join("");
       const txt = c ? (c.text === "8/8 → Executor" ? `<span class="green">8/8 → Executor</span>` : c.text === "taking apart..." ? `<span class="cyan">taking apart...</span>` : `<span class="red">${esc(c.text)}</span>`) : `<span class="sec">No coin taken apart yet</span>`;
       return `<a class="acard" href="#/audit${c ? "/" + encodeURIComponent(c.mint) : ""}">${head}<div class="stat">${a.taken_apart} taken apart</div>
-        <div class="sub">${c ? esc(c.name) : ""}</div><div class="strips">${strips}</div>
+        <div class="sub cl">${c ? logo(c.name, c.logo, 18) + " " + esc(c.name) : ""}</div><div class="strips">${strips}</div>
         <div class="foot"><span>${txt}</span><span class="sec" style="margin-left:auto">${a.rejected} rejected</span></div></a>`;
     }
     if (a.name === "analyst") {
       const l = a.last;
       return `<div class="acard">${head}<div class="stat">Scoring</div>
         <div class="ringwrap"><canvas class="ring" data-score="${l && l.score != null ? l.score : ""}" data-th="${a.min_score}"></canvas>
-        <div><div>${l ? esc(l.name) : "—"}</div><div class="sub">${l ? (l.passed ? '<span class="green">passed</span>' : esc(l.reason || "rejected")) : "No coin scored yet"}</div>
+        <div><div>${l ? `<a href="${coinHref(l.mint)}" class="cl">${logo(l.name, l.logo, 20)} ${esc(l.name)}</a>` : "—"}</div><div class="sub">${l ? (l.passed ? '<span class="green">passed</span>' : esc(l.reason || "rejected")) : "No coin scored yet"}</div>
         <div class="sub">${a.scored} scored · ${a.mode === "rules" ? "rules" : "Jev"}</div></div></div></div>`;
     }
     if (a.name === "executor") {
@@ -187,7 +237,7 @@
         <div class="sub">${l && l.sizeUsd != null ? money(l.sizeUsd) : "—"} · ${a.stack_pct}% of stack</div>
         <div class="bar"><i id="execbar" style="width:${filled ? 100 : 0}%"></i></div>
         <div class="foot"><span id="exectxt" class="${filled ? "green" : "sec"}">${l ? (filled ? "✓ Filled" : esc(l.status)) : "No signal yet"}</span>
-        <span class="sec" style="margin-left:auto">${l ? esc(l.name) : ""}</span></div></div>`;
+        <span class="sec" style="margin-left:auto">${l ? `<a href="${coinHref(l.mint)}" class="cl">${logo(l.name, l.logo, 18)} ${esc(l.name)}</a>` : ""}</span></div></div>`;
     }
     const pills = `<span class="pill mono redp">${esc(a.pills.stop)}</span><span class="pill mono greenp">${esc(a.pills.trail)}</span>`;
     return `<div class="acard">${head}<div class="stat">${a.guarding ? "Guarding" : "Idle"}</div>
@@ -232,6 +282,8 @@
       <div class="ranges">${["LIVE", "1H", "4H", "1D", "1W", "ALL"].map(r => `<button data-range="${r}" class="${r === S.range ? "on" : ""}">${r}</button>`).join("")}</div>
       <div class="sh"><h2>Agents · ${st.running} running</h2></div>
       <div class="carousel">${st.agents.map(agentCard).join("")}</div>
+      <div class="sh"><h2>New coins</h2><span class="sec" style="font-size:15px">${(st.new_coins || []).length ? "tap for the chart" : ""}</span></div>
+      <div class="list">${(st.new_coins || []).length ? st.new_coins.slice(0, 8).map(newCoinRow).join("") : '<div class="empty">Listening for graduations</div>'}</div>
       <div class="sh"><h2>Activity</h2><a href="#/activity">See all</a></div>
       <div class="list">${rows.length ? rows.map(actRow).join("") : '<div class="empty">Nothing yet tonight</div>'}</div>`;
     return { html, after() {
@@ -239,6 +291,16 @@
       chartPrev = DeskChart.line(document.getElementById("line"), { points: rng.points, marks: rng.marks, start: S.chart && S.chart.start_value }, chartPrev);
       afterCards();
     } };
+  }
+  const STAGE = { watching: ["Watching", "cyan"], killed: ["Skipped", "ter"], passed: ["→ Auditor", "cyan"], auditing: ["Auditing", "cyan"],
+                  rejected: ["Rejected", "red"], cleared: ["Cleared", "green"], holding: ["Holding", "green"], traded: ["Traded", "sec"] };
+  function newCoinRow(c) {
+    const [lab, cls] = STAGE[c.stage] || [c.stage, "sec"];
+    const ch = c.p5 == null ? "" : `<span class="${c.p5 >= 0 ? "green" : "red"}">${sgn(c.p5, 1)}</span>`;
+    return `<a class="row coinrow${pop("n" + c.mint)}" href="${coinHref(c.mint)}">${logo(c.name, c.logo, 40)}
+      <span class="main"><div class="t">${esc(c.name)} <span class="ter" style="font-size:14px">${esc(c.symbol || "")}</span></div>
+      <div class="s">${ago(c.migrated_at)} · mc ${kfmt(c.marketCap)} ${ch}</div></span>
+      <span class="v"><span class="stage ${cls}">${esc(lab)}</span>${c.reason ? `<div class="s ter" style="font-size:12px">${esc(c.reason)}</div>` : ""}</span></a>`;
   }
   function knownCoins() {
     const m = new Map();
@@ -253,7 +315,8 @@
     if (!q) return "";
     const hits = [...knownCoins()].filter(([mint, name]) => mint.toLowerCase().includes(q) || String(name).toLowerCase().includes(q)).slice(0, 8);
     if (!hits.length) return `<div class="note">${q.length >= 32 ? `<a class="link" href="#/coin/${encodeURIComponent(S.search.trim())}">Open ${esc(S.search.trim())}</a>` : "Not seen by the desk tonight"}</div>`;
-    return `<div class="list">${hits.map(([mint, name]) => `<a class="row" href="#/coin/${encodeURIComponent(mint)}"><span class="main"><div class="t">${esc(name)}</div><div class="s">${esc(mint)}</div></span></a>`).join("")}</div>`;
+    const lg = new Map(); (S.state && S.state.new_coins || []).forEach(c => lg.set(c.mint, c.logo));
+    return `<div class="list">${hits.map(([mint, name]) => `<a class="row" href="#/coin/${encodeURIComponent(mint)}">${logo(name, lg.get(mint), 32)}<span class="main"><div class="t">${esc(name)}</div><div class="s">${esc(mint)}</div></span></a>`).join("")}</div>`;
   }
 
   function agentsTab() {
@@ -264,7 +327,7 @@
       const d = S.decisions[a.name];
       const locked = a.name === "risk" && a.pause_locked;
       const decs = d ? (d.decisions.length ? d.decisions.map(x => `<div class="d"><span class="sec">${hm(x.ts)}</span>
-          <span class="cn">${ext(x.link, esc(x.name), "link")}</span>
+          <span class="cn"><a class="cl" href="${coinHref(x.mint)}">${logo(x.name, x.logo, 20)} ${esc(x.name)}</a></span>
           <span class="${/kill|red|reject|skipped|missed/.test(x.verdict) ? "red" : /pass|bought|closed/.test(x.verdict) ? "green" : "sec"}">${esc(x.verdict)}${x.reason ? " · " + esc(x.reason) : ""}</span></div>`).join("")
           : '<div class="empty">No decisions yet tonight</div>') : sk(120, null, "margin-top:10px");
       return `<div class="agentfull"><div class="top">${statusDot(a)}<span class="name ${COLOR[a.name]}">${TITLE[a.name]}</span>
@@ -307,7 +370,7 @@
       ? `<div class="vt ${a.state === "rejected" ? "red" : "green"}">${esc(a.header.title)}</div><div class="vs">${esc(a.header.subtitle)}</div>`
       : `<div class="vt cyan">Taking apart...</div><div class="vs">${esc(a.name)}</div>`;
     const rows = a.layers.map((l, i) => `<div class="lrow"><span>${l.n} · ${esc(l.name)}</span><span class="lv ${i < b.shown ? (l.pass ? "" : "red") : "nc"}">${i < b.shown ? esc(l.value) : "not checked"}</span></div>`).join("");
-    const html = backbar("Home") + `<div class="coinhead"><div class="cname">${esc(a.name)}</div></div>
+    const html = backbar("Home") + `<div class="coinhead"><a class="cname" href="${coinHref(mint)}">${logo(a.name, a.logo, 36)}${esc(a.name)}<span class="ter" style="font-size:17px;font-weight:400">Coin page ›</span></a></div>
       <div class="discs" id="discs">${discs}<div class="beam" id="beam"></div></div>
       <div class="verdict" id="verdict">${head}</div>
       <div class="list" id="lrows">${rows}</div>
@@ -359,7 +422,7 @@
     const since = p && p.since_entry_pct;
     const left = x ? `${Math.floor(x.timeout_left_s / 3600)}h ${Math.floor(x.timeout_left_s % 3600 / 60)}m` : null;
     const html = backbar("Home") + `<div class="coinhead">
-        <div class="cname">${esc(c.name || mint.slice(0, 4) + "…" + mint.slice(-3))}${c.audit_chip ? `<span class="chip ${chipOk ? "ok" : "bad"}">🛡 ${esc(c.audit_chip)}</span>` : ""}</div>
+        <div class="cname">${logo(c.name || mint, c.logo, 44)}${esc(c.name || mint.slice(0, 4) + "…" + mint.slice(-3))}${c.audit_chip ? `<a href="#/audit/${encodeURIComponent(mint)}" class="chip ${chipOk ? "ok" : "bad"}">🛡 ${esc(c.audit_chip)}</a>` : ""}</div>
         <div class="sec">${esc(c.symbol || "")} · ${esc(c.chain)} · ${c.age_h == null ? "age n/a" : c.age_h < 1 ? Math.round(c.age_h * 60) + "m old" : Math.floor(c.age_h) + "h old"}</div>
         <div class="big" style="font-size:44px;margin-top:10px">${price(c.price)}</div>
         ${since != null ? `<div class="${since >= 0 ? "green" : "red"}">${since >= 0 ? "▲" : "▼"} ${Math.abs(since).toFixed(2)}% since entry</div>` : ""}
@@ -368,7 +431,12 @@
       <div class="stats"><div><div class="k">Market cap</div><div class="vv">${kfmt(c.stats.marketCap)}</div></div>
         <div><div class="k">Liquidity</div><div class="vv">${kfmt(c.stats.liquidityUsd)}</div></div>
         <div><div class="k">24h volume</div><div class="vv">${kfmt(c.stats.volume24h)}</div></div>
-        <div><div class="k">Holders</div><div class="vv">${c.stats.holders == null ? "n/a" : c.stats.holders.toLocaleString()}</div></div></div>
+        <div><div class="k">Holders</div><div class="vv">${c.stats.holders == null ? "n/a" : c.stats.holders.toLocaleString()}</div></div>
+        <div><div class="k">1h volume</div><div class="vv">${kfmt(c.stats.volume1h)}</div></div>
+        <div><div class="k">1h buys / sells</div><div class="vv">${c.stats.buys1h == null ? "n/a" : c.stats.buys1h + " / " + (c.stats.sells1h == null ? "n/a" : c.stats.sells1h)}</div></div></div>
+      <div class="chg">${[["5m", c.stats.change5m], ["1h", c.stats.change1h], ["24h", c.stats.change24h]].map(([k, v]) =>
+        `<div><span class="k">${k}</span><span class="${v == null ? "ter" : v >= 0 ? "green" : "red"}">${v == null ? "n/a" : sgn(v, 1)}</span></div>`).join("")}</div>
+      <div class="note mono">${esc(mint)}</div>
       ${p ? `<div class="card"><h3>Your position · ${money(p.sizeUsd)} in · ${esc(p.agent)}</h3>
           <div class="kv"><span class="sec">Entry</span><span>${price(p.entryPrice)}</span></div>
           ${p.open ? "" : `<div class="kv"><span class="sec">Exit · ${esc(p.exitReason)}</span><span>${price(p.exitPrice)}</span></div>
@@ -447,6 +515,9 @@
     const o = typeof out === "string" ? { html: out } : out;
     const ae = document.activeElement && document.activeElement.id === "q";
     view.innerHTML = o.html;
+    if (navAnim && !RM()) { view.classList.remove("enter"); void view.offsetWidth; view.classList.add("enter"); }
+    navAnim = false;
+    if (S.state) seenReady = true;
     if (o.after) o.after();
     bind(ae);
   }
@@ -458,8 +529,9 @@
       if (refocus) q.focus(); }
     view.querySelectorAll("[data-range]").forEach(b => b.onclick = () => { S.range = b.dataset.range; chartPrev = null; render(); });
   }
+  let navAnim = false;
   window.addEventListener("hashchange", async () => {
-    keepD();
+    keepD(); navAnim = true;
     window.scrollTo(0, 0); render();
     if (S.state) { try { await loadRoute(null); } catch (e) {} render(); }
   });
