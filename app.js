@@ -424,7 +424,16 @@
   }
 
   function gate() {
-    return `<div class="gate"><h1>Open the desk link</h1><p>This app needs the private link from Telegram. Type “status” to your Grok Bot in Telegram and open the link it sends. Nothing is shown until then.</p></div>`;
+    return `<div class="gate"><h1>Open the desk link</h1><p>Type “status” to your Grok Bot in Telegram, copy the desk link it sends, and paste it here.</p>
+      <input id="gl" class="gin" type="url" inputmode="url" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="Paste the desk link">
+      <button id="gb" class="gbtn">Open desk</button><p id="ge" class="gerr" hidden>That isn't a desk link. Copy the whole link from Telegram.</p></div>`;
+  }
+  function bindGate() {
+    const b = document.getElementById("gb"); if (!b) return;
+    b.onclick = () => { const v = (document.getElementById("gl").value || "").trim();
+      const m = v.match(/[#?&]d=([^&\s]+)/); const dp = m ? decodeURIComponent(m[1]).trim() : "";
+      if (dp.length < 32) { document.getElementById("ge").hidden = false; return; }
+      localStorage.setItem("desk.d", dp); location.replace(location.pathname + location.search + "#/home?d=" + encodeURIComponent(dp)); location.reload(); };
   }
 
   // ---------- render / routing ----------
@@ -432,7 +441,7 @@
     tickOffline();
     const r = route();
     document.querySelectorAll(".tab").forEach(t => t.classList.toggle("on", t.dataset.tab === r.name || (r.name === "coin" || r.name === "audit") && t.dataset.tab === "home"));
-    if (!BASE) { view.innerHTML = gate(); document.getElementById("tabbar").hidden = true; return; }
+    if (!BASE) { if (!document.getElementById("gb")) { view.innerHTML = gate(); bindGate(); } document.getElementById("tabbar").hidden = true; return; }
     const out = r.name === "agents" ? agentsTab() : r.name === "activity" ? activityTab() : r.name === "account" ? accountTab()
       : r.name === "coin" && r.arg ? coinScreen(decodeURIComponent(r.arg)) : r.name === "audit" ? auditScreen(r.arg && decodeURIComponent(r.arg)) : home();
     const o = typeof out === "string" ? { html: out } : out;
