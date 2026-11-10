@@ -142,9 +142,10 @@
     const real = (list || []).filter(c => c && c.o != null && c.h != null && c.l != null && c.c != null && c.h > 0);
     const st = canvas._st || (canvas._st = { off: 0 });
     canvas._draw = () => candles(canvas, list, exitLine, opts);
-    if (real.length < (opts.min || 3)) {
+    const F = opts.fmt || fmtP, entryLine = opts.entryLine != null && isFinite(opts.entryLine) ? opts.entryLine : null;
+    if (opts.emptyText || real.length < (opts.min || 3)) {
       ctx.fillStyle = C.sec; ctx.font = "15px " + FONT; ctx.textAlign = "center";
-      ctx.fillText(opts.loading ? "Loading chart…" : "Chart builds as trades come in", w / 2, h / 2 - 10); ctx.textAlign = "left";
+      ctx.fillText(opts.emptyText || (opts.loading ? "Loading chart…" : "Chart builds as trades come in"), w / 2, h / 2 - 10); ctx.textAlign = "left";
       canvas._last = null; return null;
     }
     const all = fillGaps(real, opts.step);
@@ -159,6 +160,7 @@
     const vis = cs.filter(c => !c.gap);
     let lo = Math.min(...(vis.length ? vis : cs).map(c => c.l)), hi = Math.max(...(vis.length ? vis : cs).map(c => c.h));
     if (exitLine != null && exitLine > lo * 0.5 && exitLine < hi * 1.5) { lo = Math.min(lo, exitLine); hi = Math.max(hi, exitLine); }
+    if (entryLine != null && entryLine > lo * 0.5 && entryLine < hi * 1.5) { lo = Math.min(lo, entryLine); hi = Math.max(hi, entryLine); }
     if (hi - lo <= hi * 1e-6) { hi *= 1.02; lo *= 0.98; }
     const pad = (hi - lo) * 0.06; lo -= pad; hi += pad;
     const Y = v => priceBot - (v - lo) / (hi - lo) * (priceBot - top);
@@ -166,7 +168,7 @@
     niceTicks(lo, hi, 4).forEach(v => {
       const y = Math.round(Y(v)) + 0.5; if (y < top || y > priceBot) return;
       ctx.strokeStyle = "rgba(84,84,88,0.35)"; ctx.lineWidth = 1; ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(plotW, y); ctx.stroke();
-      ctx.fillStyle = C.ter; ctx.fillText(fmtP(v), plotW + 6, y);
+      ctx.fillStyle = C.ter; ctx.fillText(F(v), plotW + 6, y);
     });
     const vmax = Math.max(0, ...cs.map(c => c.gap ? 0 : (c.vol > 0 ? c.vol : 0)));
     cs.forEach((c, i) => {
@@ -200,8 +202,17 @@
       ctx.setLineDash([3, 3]); ctx.strokeStyle = lc; ctx.globalAlpha = 0.7; ctx.beginPath(); ctx.moveTo(0, ly); ctx.lineTo(plotW, ly); ctx.stroke();
       ctx.setLineDash([]); ctx.globalAlpha = 1;
       ctx.fillStyle = lc; roundRect(ctx, plotW + 2, ly - 9, AX - 4, 18, 4); ctx.fill();
-      ctx.fillStyle = "#000"; ctx.font = "600 11px " + FONT; ctx.textBaseline = "middle"; ctx.fillText(fmtP(v), plotW + 6, ly); ctx.textBaseline = "alphabetic";
+      ctx.fillStyle = "#000"; ctx.font = "600 11px " + FONT; ctx.textBaseline = "middle"; ctx.fillText(F(v), plotW + 6, ly); ctx.textBaseline = "alphabetic";
     };
+    if (entryLine != null) {           // position entry: solid cyan, distinct from the orange dashed Risk line
+      const y = Y(entryLine);
+      if (y >= top && y <= priceBot) {
+        ctx.strokeStyle = C.cyan; ctx.lineWidth = 1.5; ctx.globalAlpha = 0.9;
+        ctx.beginPath(); ctx.moveTo(0, Math.round(y) + 0.5); ctx.lineTo(plotW, Math.round(y) + 0.5); ctx.stroke(); ctx.globalAlpha = 1;
+        ctx.font = "600 12px " + FONT; ctx.fillStyle = C.cyan; ctx.textAlign = "right";
+        ctx.fillText("Entry " + F(entryLine), plotW - 4, y - 7); ctx.textAlign = "left";
+      }
+    }
     if (exitLine != null) {
       const y = Y(exitLine);
       if (y >= top && y <= priceBot) {

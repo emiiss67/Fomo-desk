@@ -1,6 +1,7 @@
 /* Grok Bot desk app. Plan B: polls public JSON files written by api.py. No framework, no build. */
 (function () {
   "use strict";
+  function nat(v) { return v == null ? "n/a" : Number(v).toPrecision(4); }
   const SUPA = "https://arbqqmxcmzkfvksapiaw.supabase.co/storage/v1/object/public/desk/d/";
   const LOCAL = ["localhost", "127.0.0.1"].includes(location.hostname);
   const QS = new URLSearchParams(location.search);
@@ -577,6 +578,8 @@
     return out;
   }
   const dash = v => v == null ? "—" : v;
+  const mcMode = () => { try { return localStorage.getItem("desk.mcmode") === "1"; } catch (e) { return false; } };
+  const setMcMode = on => { try { localStorage.setItem("desk.mcmode", on ? "1" : "0"); } catch (e) { /* private mode */ } };
 
   // header price: the newest real price we have (GeckoTerminal's last candle close if it is newer than the desk sample)
   function livePrice(mint, c) {
@@ -607,6 +610,13 @@
       vol: '<path d="M3 17l5-5 4 4 8-9"/><path d="M15 7h5v5"/>', hold: '<circle cx="9" cy="8" r="3"/><path d="M3 20c0-3.3 2.7-6 6-6s6 2.7 6 6"/><path d="M16 4a3 3 0 0 1 0 6m2 4c2 .7 3 2.6 3 6"/>',
       v1: '<circle cx="12" cy="12" r="8"/><path d="M12 8v4l3 2"/>', bs: '<path d="M7 17V7l-3 3m3-3 3 3M17 7v10l-3-3m3 3 3-3"/>' };
     const tile = (ic, k, v) => `<div class="tile"><svg viewBox="0 0 24 24">${IC[ic]}</svg><div class="k">${k}</div><div class="vv">${v}</div></div>`;
+    // Market cap toggle: price readouts switch to implied market cap = currentMC * (thatPrice / currentPrice), constant
+    // supply. No current MC or price = n/a, never a made-up number. Saved in localStorage.
+    const mcOn = mcMode(), curMC = c.stats.marketCap, curP = c.price;
+    const fac = curMC != null && curP != null && curP > 0 && isFinite(curMC / curP) ? curMC / curP : null;
+    const disp = v => !mcOn ? price(v) : v == null || fac == null ? "n/a" : kfmt(v * fac);
+    const mcTile = `<button type="button" class="tile tog${mcOn ? " on" : ""}" id="mctog" aria-pressed="${mcOn}"><svg viewBox="0 0 24 24">${IC.mc}</svg>
+      <div class="k">Market cap <span class="tgl">${mcOn ? "showing MC · tap for price" : "tap to show MC"}</span></div><div class="vv">${kfmt(curMC)}</div></button>`;
     const au = S.audit[mint];
     const audit = au && au.layers ? `<div class="sh"><h2>Audit</h2><a href="#/audit/${encodeURIComponent(mint)}">${esc(c.audit_chip || "")} ›</a></div>
       <div class="list glass checklist">${au.layers.map(l => `<div class="ck"><span class="tk ${l.pass === true ? "ok" : l.pass === false ? "bad" : "nc"}">${l.pass === true ? "✓" : l.pass === false ? "✕" : "–"}</span>
@@ -615,24 +625,29 @@
         <div class="cname">${logo(c.name || mint, c.logo, 48)}<span class="cnm"><span>${esc(c.name || mint.slice(0, 4) + "…" + mint.slice(-3))}</span>
           <span class="sec sm">${esc(c.symbol || "")} · ${esc(c.chain)} · ${c.age_h == null ? "age —" : c.age_h < 1 ? Math.round(c.age_h * 60) + "m old" : Math.floor(c.age_h) + "h old"}</span></span>
           ${c.audit_chip ? `<a href="#/audit/${encodeURIComponent(mint)}" class="chip ${chipOk ? "ok" : "bad"}">🛡 ${esc(c.audit_chip)}</a>` : ""}</div>
-        <div class="pricerow"><span class="big pricebig glow">${tick("p" + mint, livePrice(mint, c), price)}</span>
+        <div class="pricerow"><span class="big pricebig glow">${mcOn ? tick("m" + mint, fac == null ? null : (livePrice(mint, c) == null ? null : livePrice(mint, c) * fac), v => v == null ? "n/a" : kfmt(v)) : tick("p" + mint, livePrice(mint, c), price)}</span>${mcOn ? `<span class="ter sm mclbl">MC</span>` : ""}
           ${chg ? `<span class="cpill lg2 ${chg[0] >= 0 ? "up" : "down"}">${chg[0] >= 0 ? "▲" : "▼"} ${Math.abs(chg[0]).toFixed(chg[1] === "since entry" ? 2 : 1)}% <span class="ter">${chg[1]}</span></span>` : ""}</div>
       </div>
       <div class="chartcard glass" id="chartcard"><div class="chsrc">${chartSrc(mint, c)}</div>
         <div class="chartwrap" style="position:relative"><canvas id="candles"></canvas><i id="breath" class="breath" hidden></i><div class="chshim"></div></div></div>
-      <div class="tiles">${tile("mc", "Market cap", kfmt(c.stats.marketCap))}${tile("liq", "Liquidity", kfmt(c.stats.liquidityUsd))}
+      <div class="tiles">${mcTile}${tile("liq", "Liquidity", kfmt(c.stats.liquidityUsd))}
         ${tile("vol", "24h volume", kfmt(c.stats.volume24h))}${tile("hold", "Holders", c.stats.holders == null ? "—" : c.stats.holders.toLocaleString())}
         ${tile("v1", "1h volume", kfmt(c.stats.volume1h))}${tile("bs", "1h buys / sells", c.stats.buys1h == null ? "—" : c.stats.buys1h + " / " + dash(c.stats.sells1h))}</div>
       <div class="chg glass">${[["5m", c.stats.change5m], ["1h", c.stats.change1h], ["24h", c.stats.change24h]].map(([k, v]) =>
         `<div><span class="k">${k}</span><span class="${v == null ? "ter" : v >= 0 ? "green" : "red"}">${v == null ? "—" : sgn(v, 1)}</span></div>`).join("")}</div>
       ${p ? `<div class="card glass"><h3>Your position · ${money(p.sizeUsd)} in · ${esc(p.agent)}</h3>
-          <div class="kv"><span class="sec">Entry</span><span>${price(p.entryPrice)}</span></div>
-          ${p.open ? "" : `<div class="kv"><span class="sec">Exit · ${esc(p.exitReason)}</span><span>${price(p.exitPrice)}</span></div>
+          <div class="kv"><span class="sec">Entry${mcOn ? " MC" : ""}</span><span>${disp(p.entryPrice)}</span></div>
+          ${p.hold ? `<div class="kv"><span class="sec">Hold</span><span>owner hold · no stop / trail / timeout (rug still exits)</span></div>` : ""}
+          <div class="kv"><span class="sec">${esc(p.nativeSymbol || "SOL")} in</span><span>${nat(p.nativeIn)}</span></div>
+          <div class="kv"><span class="sec">Entry fee</span><span>${p.entryFeeUsd == null ? "n/a" : money(p.entryFeeUsd)}</span></div>
+          ${p.open ? "" : `<div class="kv"><span class="sec">Exit${mcOn ? " MC" : ""} · ${esc(p.exitReason)}</span><span>${disp(p.exitPrice)}</span></div>
+          <div class="kv"><span class="sec">${esc(p.nativeSymbol || "SOL")} out</span><span>${nat(p.nativeOut)}</span></div>
+          <div class="kv"><span class="sec">Fees (in + out)</span><span>${p.feesUsd == null ? "n/a" : money(p.feesUsd)}</span></div>
           <div class="kv"><span class="sec">PnL after fees</span><span class="${p.pnlUsd >= 0 ? "green" : "red"}">${money(p.pnlUsd)}</span></div>`}</div>` : ""}
       ${x ? `<div class="card glass"><h3>Exit</h3>
-          <div class="kv"><span class="sec">Stop line · -${x.stop_pct}%</span><span class="red">${price(x.stop_line)}</span></div>
-          <div class="kv"><span class="sec">Trail line · ${x.trail_pct}%</span><span class="${x.trail_active ? "green" : "ter"}">${x.trail_active ? price(x.trail_line) : "not active yet"}</span></div>
-          <div class="kv"><span class="sec">Time left to timeout</span><span>${left}</span></div></div>` : ""}
+          <div class="kv"><span class="sec">Stop line · -${x.stop_pct}%</span><span class="red">${disp(x.stop_line)}</span></div>
+          <div class="kv"><span class="sec">Trail line · ${x.trail_pct}%</span><span class="${x.trail_active ? "green" : "ter"}">${x.trail_active ? disp(x.trail_line) : "not active yet"}</span></div>
+          <div class="kv"><span class="sec">Time left to timeout</span><span>${p && p.hold ? "on hold · no auto-sell (rug still exits)" : left}</span></div></div>` : ""}
       ${audit}
       <div class="note mono">${esc(mint)}</div>
       <div class="spacer"></div>${safeUrl(c.link) ? `<div class="ctabar"><a class="cta ${p && p.open ? "sell" : ""}" href="${esc(c.link)}" target="_blank" rel="noopener">${esc(c.button)}</a></div>` : ""}`;
@@ -643,8 +658,15 @@
       if (cv && S.chartOff[mint] != null) cv._st = { off: S.chartOff[mint] };
       const wrap = document.getElementById("chartcard");
       if (wrap) wrap.classList.toggle("loading", !!(g && g.loading && !gt));
-      const lastC = DeskChart.candles(cv, gt || deskCandles(c.candles, step), x ? x.risk_trailing_stop : null,
-                        { loading: !!c.pool && (!g || g.loading), step, min: 1 });
+      const base = gt || deskCandles(c.candles, step), k = mcOn ? fac : 1;
+      const list = k == null ? [] : k === 1 ? base : base.map(q => ({ ...q, o: q.o * k, h: q.h * k, l: q.l * k, c: q.c * k }));
+      const sc = v => v == null || k == null ? null : v * k;
+      const lastC = DeskChart.candles(cv, list, x ? sc(x.risk_trailing_stop) : null,
+                        { loading: !!c.pool && (!g || g.loading), step, min: 1, fmt: mcOn ? kfmt : undefined,
+                          entryLine: p && p.entryPrice != null ? sc(p.entryPrice) : null,
+                          emptyText: mcOn && k == null ? "Market cap n/a" : undefined });
+      const tg = document.getElementById("mctog");
+      if (tg) tg.onclick = e => { e.preventDefault(); setMcMode(!mcMode()); const cvs = document.getElementById("candles"); if (cvs) cvs._lastC = null; render(); };
       if (cv) cv.addEventListener("pointerup", () => { S.chartOff[mint] = cv._st.off; });
       breathe(lastC);
       view.querySelectorAll("[data-tf]").forEach(b => b.onclick = e => { e.preventDefault(); if (S.tf[mint] === b.dataset.tf) return;
