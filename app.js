@@ -586,7 +586,7 @@
   function chartSrc(mint, c) {
     const cur = tfFor(mint, c.age_h), g = OHLC[mint + "|" + cur];
     const wait = g && g.waitUntil && g.waitUntil > Date.now() ? Math.ceil((g.waitUntil - Date.now()) / 1000) : 0;
-    const src = g && g.cs && g.cs.length ? `${cur} · GeckoTerminal` : g && g.loading ? (wait ? `GeckoTerminal busy · retry in ${wait}s` : `Loading ${cur}…`)
+    const src = g && g.cs && g.cs.length ? `${cur} · GeckoTerminal` : (g ? g.loading : !!c.pool) ? (wait ? `GeckoTerminal busy · retry in ${wait}s` : `Loading ${cur}…`)
       : (c.candles || []).length ? `${cur} · desk prices` : "";
     return `<span class="tfs">${Object.keys(TFS).map(k => `<button type="button" data-tf="${k}" class="${k === cur ? "on" : ""}" aria-pressed="${k === cur}">${k}</button>`).join("")}</span><span class="srcl">${esc(src)}</span>`;
   }
