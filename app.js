@@ -544,7 +544,7 @@
         OHLC[key] = { at: Date.now(), cs, label: tf, step, loading: false };
       })
       .catch(e => {
-        if (e && e.status === 429) {                                   // rate limited: back off 15s, keep it queued (shows "retry in Ns")
+        if (!e || !e.status || e.status === 429) {                                   // rate limited: back off 15s, keep it queued (shows "retry in Ns")
           gtPauseUntil = Date.now() + 15000;
           OHLC[key] = Object.assign(OHLC[key] || { cs: [] }, { at: 0, loading: true, waitUntil: gtPauseUntil });
           if (!gtQueue.some(q => q[0] === key)) gtQueue.push([key, mint, pool, ageH]);
