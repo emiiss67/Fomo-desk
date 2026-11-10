@@ -148,7 +148,7 @@ canvas{display:block;width:100%}
 .cta{position:fixed;left:var(--g);right:var(--g);bottom:calc(var(--tab) + 12px);height:52px;border-radius:26px;
   background:var(--green);color:#000;font-weight:700;font-size:17px;display:flex;align-items:center;justify-content:center;z-index:15}
 .cta.sell{background:var(--red);color:#fff}
-.spacer{height:80px}
+.spacer{height:calc(52px + 12px + 56px)}   /* clear the sticky Buy/Sell button: button + gap + breathing room */
 
 /* account */
 .seg{display:flex;background:var(--card2);border-radius:9px;padding:2px;width:160px}
@@ -212,6 +212,7 @@ a.acard:active,.cta:active,.gbtn:active{transform:scale(.97)}
 .tab:active svg{transform:scale(.88)}.tab svg{transition:transform .15s ease}
 .ranges button{transition:background-color .2s ease,color .2s ease}
 .sd{transition:background-color .4s ease}
+.chsrc{color:var(--ter);font-size:11px;text-align:right;padding:2px var(--g) 0;min-height:14px}
 .confetti{position:fixed;inset:0;width:100vw;height:100vh;pointer-events:none;z-index:50}
 
 @media (prefers-reduced-motion: reduce){

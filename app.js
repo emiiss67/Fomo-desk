@@ -410,6 +410,42 @@
     step();
   }
 
+  // ---------- real OHLCV: GeckoTerminal public API (no key, CORS *), fetched by the phone; ~30 calls/min/IP limit ----------
+  // One request per coin per 30s, at most one in flight, 60s back-off after a 429/error. Desk prices are the fallback.
+  const OHLC = {}; let gtBusy = false, gtPauseUntil = 0;
+  function gtWanted(mint, pool, ageH) {
+    const o = OHLC[mint];
+    if (!pool || gtBusy || Date.now() < gtPauseUntil || (o && Date.now() - o.at < 30000)) return;
+    gtBusy = true;
+    const tf = ageH != null && ageH > 3 ? { agg: 5, label: "5m" } : { agg: 1, label: "1m" };
+    const url = `https://api.geckoterminal.com/api/v2/networks/solana/pools/${encodeURIComponent(pool)}/ohlcv/minute?aggregate=${tf.agg}&limit=150&currency=usd`;
+    fetch(url, { headers: { Accept: "application/json" }, referrerPolicy: "no-referrer", cache: "no-store" })
+      .then(r => { if (r.status !== 200) throw new Error("HTTP " + r.status); return r.json(); })
+      .then(j => {
+        const l = (((j || {}).data || {}).attributes || {}).ohlcv_list || [];
+        const cs = l.map(x => ({ t: +x[0], o: +x[1], h: +x[2], l: +x[3], c: +x[4], vol: +x[5] }))
+          .filter(c => [c.t, c.o, c.h, c.l, c.c].every(isFinite)).sort((a, b) => a.t - b.t);
+        OHLC[mint] = { at: Date.now(), cs, label: tf.label };
+      })
+      .catch(() => { gtPauseUntil = Date.now() + 60000; OHLC[mint] = Object.assign(OHLC[mint] || { cs: [] }, { at: Date.now(), failed: true }); })
+      .finally(() => { gtBusy = false; if (route().name === "coin" && decodeURIComponent(route().arg || "") === mint) render(); });
+  }
+  // Desk fallback: db.prices 1-minute OHLC. A minute with one sample has o=c; open it at the previous close so the
+  // body shows the move (both are real prices). Minutes with no sample are not drawn.
+  function deskCandles(list) {
+    const out = []; let prev = null;
+    (list || []).forEach(c => { if (c.c == null) return; const t = typeof c.t === "number" ? c.t : Date.parse(c.t) / 1000;
+      const o = prev != null && c.o === c.c ? prev : c.o;
+      out.push({ t, o, h: Math.max(c.h, o), l: Math.min(c.l, o), c: c.c, vol: c.vol }); prev = c.c; });
+    return out;
+  }
+  const dash = v => v == null ? "—" : v;
+
+  function chartSrc(mint, c) {
+    const g = OHLC[mint];
+    if (g && g.cs && g.cs.length >= 3) return `${g.label} candles · GeckoTerminal`;
+    return (c.candles || []).length >= 3 ? "1m candles · desk prices" : "";
+  }
   function coinScreen(mint) {
     const loading = backbar("Home") + `<div class="gut">${sk(34, "60%")}${sk(18, "40%", "margin-top:8px")}${sk(56, "50%", "margin-top:14px")}</div>
       <div class="gut" style="margin-top:14px">${sk(260)}</div><div class="gut" style="margin-top:16px">${sk(130, null, "border-radius:14px")}</div>`;
@@ -428,14 +464,15 @@
         ${since != null ? `<div class="${since >= 0 ? "green" : "red"}">${since >= 0 ? "▲" : "▼"} ${Math.abs(since).toFixed(2)}% since entry</div>` : ""}
       </div>
       <div class="chartwrap gut"><canvas id="candles"></canvas></div>
+      <div class="chsrc">${chartSrc(mint, c)}</div>
       <div class="stats"><div><div class="k">Market cap</div><div class="vv">${kfmt(c.stats.marketCap)}</div></div>
         <div><div class="k">Liquidity</div><div class="vv">${kfmt(c.stats.liquidityUsd)}</div></div>
         <div><div class="k">24h volume</div><div class="vv">${kfmt(c.stats.volume24h)}</div></div>
-        <div><div class="k">Holders</div><div class="vv">${c.stats.holders == null ? "n/a" : c.stats.holders.toLocaleString()}</div></div>
+        <div><div class="k">Holders</div><div class="vv">${c.stats.holders == null ? "—" : c.stats.holders.toLocaleString()}</div></div>
         <div><div class="k">1h volume</div><div class="vv">${kfmt(c.stats.volume1h)}</div></div>
-        <div><div class="k">1h buys / sells</div><div class="vv">${c.stats.buys1h == null ? "n/a" : c.stats.buys1h + " / " + (c.stats.sells1h == null ? "n/a" : c.stats.sells1h)}</div></div></div>
+        <div><div class="k">1h buys / sells</div><div class="vv">${c.stats.buys1h == null ? "—" : c.stats.buys1h + " / " + dash(c.stats.sells1h)}</div></div></div>
       <div class="chg">${[["5m", c.stats.change5m], ["1h", c.stats.change1h], ["24h", c.stats.change24h]].map(([k, v]) =>
-        `<div><span class="k">${k}</span><span class="${v == null ? "ter" : v >= 0 ? "green" : "red"}">${v == null ? "n/a" : sgn(v, 1)}</span></div>`).join("")}</div>
+        `<div><span class="k">${k}</span><span class="${v == null ? "ter" : v >= 0 ? "green" : "red"}">${v == null ? "—" : sgn(v, 1)}</span></div>`).join("")}</div>
       <div class="note mono">${esc(mint)}</div>
       ${p ? `<div class="card"><h3>Your position · ${money(p.sizeUsd)} in · ${esc(p.agent)}</h3>
           <div class="kv"><span class="sec">Entry</span><span>${price(p.entryPrice)}</span></div>
@@ -447,7 +484,10 @@
           <div class="kv"><span class="sec">Time left to timeout</span><span>${left}</span></div></div>` : ""}
       <div class="spacer"></div>${safeUrl(c.link) ? `<a class="cta ${p && p.open ? "sell" : ""}" href="${esc(c.link)}" target="_blank" rel="noopener">${esc(c.button)}</a>` : ""}`;
     return { html, after() {
-      DeskChart.candles(document.getElementById("candles"), c.candles, x ? x.risk_trailing_stop : null);
+      gtWanted(mint, c.pool, c.age_h);
+      const g = OHLC[mint], gt = g && g.cs && g.cs.length >= 3 ? g.cs : null;
+      DeskChart.candles(document.getElementById("candles"), gt || deskCandles(c.candles), x ? x.risk_trailing_stop : null,
+                        { loading: !g && !!c.pool });
     } };
   }
 

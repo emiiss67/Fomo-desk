@@ -100,37 +100,84 @@
     ctx.arcTo(x, y + h, x, y, r); ctx.arcTo(x, y, x + w, y, r); ctx.closePath();
   }
 
-  /* Coin candles: 1-minute OHLC from db.prices + volume bars (change of volume.m5). */
-  function candles(canvas, list, exitLine) {
-    const H = 260;
+  /* Small prices: 0.00009144 -> "0.0₄9144" (subscript = number of zeros after "0."), else 4 significant digits. */
+  const SUB = "₀₁₂₃₄₅₆₇₈₉";
+  function fmtP(v) {
+    if (v == null || !isFinite(v)) return "—";
+    if (v >= 1000) return v.toLocaleString("en-US", { maximumFractionDigits: 0 });
+    if (v >= 1) return v.toFixed(v >= 100 ? 1 : 3);
+    if (v >= 0.001) return v.toFixed(5).replace(/0+$/, "").replace(/\.$/, "");
+    const z = Math.floor(-Math.log10(v));                           // zeros after "0."
+    const digits = Math.round(v * Math.pow(10, z + 4)).toString().slice(0, 4).replace(/0+$/, "") || "0";
+    return "0.0" + String(z).split("").map(d => SUB[+d]).join("") + digits;
+  }
+  function niceTicks(lo, hi, n) {
+    const span = hi - lo, raw = span / n, mag = Math.pow(10, Math.floor(Math.log10(raw))), f = raw / mag;
+    const step = (f < 1.5 ? 1 : f < 3 ? 2 : f < 7 ? 5 : 10) * mag, out = [];
+    for (let v = Math.ceil(lo / step) * step; v <= hi + 1e-30; v += step) out.push(v);
+    return out;
+  }
+
+  /* Coin candles. list = [{t (unix s), o, h, l, c, vol}] oldest first (real OHLCV only; never invented).
+     Widths fill the plot by candle count; price axis on the right; time labels; volume underneath. */
+  function candles(canvas, list, exitLine, opts) {
+    const H = 280;
     const { ctx, w, h } = setup(canvas, H);
-    const cs = (list || []).filter(c => c.o != null && c.h != null && c.l != null && c.c != null);
-    const priceBot = h * 0.74, top = 12, volTop = h * 0.80, volBot = h - 4;
-    if (!cs.length) { ctx.fillStyle = C.sec; ctx.font = "15px " + FONT; ctx.textAlign = "center";
-      ctx.fillText("No candles yet", w / 2, h / 2); ctx.textAlign = "left"; return; }
+    const cs = (list || []).filter(c => c && c.o != null && c.h != null && c.l != null && c.c != null && c.h > 0);
+    if (cs.length < 3) {
+      ctx.fillStyle = C.sec; ctx.font = "15px " + FONT; ctx.textAlign = "center";
+      ctx.fillText((opts && opts.loading) ? "Loading chart…" : "Chart builds as trades come in", w / 2, h / 2 - 10); ctx.textAlign = "left"; return;
+    }
+    const AX = 64, plotW = w - AX, top = 10, priceBot = Math.round(h * 0.70), volTop = Math.round(h * 0.75), volBot = h - 22;
     let lo = Math.min(...cs.map(c => c.l)), hi = Math.max(...cs.map(c => c.h));
-    if (exitLine != null) { lo = Math.min(lo, exitLine); hi = Math.max(hi, exitLine); }
-    if (hi - lo < 1e-15) { hi *= 1.01; lo *= 0.99; }
-    const pad = (hi - lo) * 0.08; lo -= pad; hi += pad;
-    const n = Math.max(cs.length, 30), cw = w / n, bw = Math.max(1.5, cw * 0.6);
+    if (exitLine != null && exitLine > lo * 0.5 && exitLine < hi * 1.5) { lo = Math.min(lo, exitLine); hi = Math.max(hi, exitLine); }
+    if (hi - lo <= hi * 1e-6) { hi *= 1.02; lo *= 0.98; }
+    const pad = (hi - lo) * 0.06; lo -= pad; hi += pad;
     const Y = v => priceBot - (v - lo) / (hi - lo) * (priceBot - top);
-    const off = w - cs.length * cw;
-    const vols = cs.map(c => (c.vol != null && c.vol > 0) ? c.vol : 0);
-    const vmax = Math.max(...vols, 1e-9);
+    const n = cs.length, cw = plotW / n, bw = Math.max(1, Math.min(14, cw * 0.72));
+    const X = i => i * cw + cw / 2;
+    // grid + price axis
+    ctx.font = "11px " + FONT; ctx.textBaseline = "middle";
+    niceTicks(lo, hi, 4).forEach(v => {
+      const y = Math.round(Y(v)) + 0.5; if (y < top || y > priceBot) return;
+      ctx.strokeStyle = "rgba(84,84,88,0.35)"; ctx.lineWidth = 1; ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(plotW, y); ctx.stroke();
+      ctx.fillStyle = C.ter; ctx.fillText(fmtP(v), plotW + 6, y);
+    });
+    // volume
+    const vols = cs.map(c => (c.vol != null && c.vol > 0) ? c.vol : 0), vmax = Math.max(...vols);
     cs.forEach((c, i) => {
-      const x = off + i * cw + cw / 2, up = c.c >= c.o, col = up ? C.green : C.red;
+      const up = c.c >= c.o, x = X(i);
+      if (vmax > 0 && vols[i] > 0) { const vh = Math.max(1, (volBot - volTop) * vols[i] / vmax);
+        ctx.fillStyle = up ? "rgba(0,211,90,0.40)" : "rgba(255,69,58,0.40)"; ctx.fillRect(x - bw / 2, volBot - vh, bw, vh); }
+    });
+    // candles: wick + body
+    cs.forEach((c, i) => {
+      const up = c.c >= c.o, col = up ? C.green : C.red, x = Math.round(X(i)) + 0.5;
       ctx.strokeStyle = col; ctx.lineWidth = 1;
       ctx.beginPath(); ctx.moveTo(x, Y(c.h)); ctx.lineTo(x, Y(c.l)); ctx.stroke();
       const y1 = Y(Math.max(c.o, c.c)), y2 = Y(Math.min(c.o, c.c));
-      ctx.fillStyle = col; ctx.fillRect(x - bw / 2, y1, bw, Math.max(1, y2 - y1));
-      if (vols[i] > 0) { const vh = (volBot - volTop) * vols[i] / vmax;
-        ctx.fillStyle = up ? "rgba(0,211,90,0.45)" : "rgba(255,69,58,0.45)"; ctx.fillRect(x - bw / 2, volBot - vh, bw, vh); }
+      ctx.fillStyle = col; ctx.fillRect(X(i) - bw / 2, y1, bw, Math.max(1, y2 - y1));
     });
+    // time labels
+    ctx.fillStyle = C.ter; ctx.textBaseline = "alphabetic"; ctx.textAlign = "center";
+    const hm = t => new Date(t * 1000).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", hour12: false });
+    const k = Math.min(4, n);
+    for (let j = 0; j < k; j++) { const i = Math.round((n - 1) * (j + 0.5) / k); ctx.fillText(hm(cs[i].t), Math.min(plotW - 18, Math.max(18, X(i))), h - 6); }
+    ctx.textAlign = "left";
+    // last price tag on the axis
+    const last = cs[n - 1], ly = Math.round(Y(last.c)) + 0.5, lc = last.c >= last.o ? C.green : C.red;
+    ctx.setLineDash([3, 3]); ctx.strokeStyle = lc; ctx.globalAlpha = 0.7; ctx.beginPath(); ctx.moveTo(0, ly); ctx.lineTo(plotW, ly); ctx.stroke();
+    ctx.setLineDash([]); ctx.globalAlpha = 1;
+    ctx.fillStyle = lc; roundRect(ctx, plotW + 2, ly - 9, AX - 4, 18, 4); ctx.fill();
+    ctx.fillStyle = "#000"; ctx.font = "600 11px " + FONT; ctx.textBaseline = "middle"; ctx.fillText(fmtP(last.c), plotW + 6, ly);
+    ctx.textBaseline = "alphabetic";
     if (exitLine != null) {
       const y = Y(exitLine);
-      ctx.setLineDash([6, 5]); ctx.strokeStyle = C.orange; ctx.lineWidth = 1.5;
-      ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(w, y); ctx.stroke(); ctx.setLineDash([]);
-      ctx.font = "600 12px " + FONT; ctx.fillStyle = C.orange; ctx.fillText("Risk trailing stop", 4, y - 7);
+      if (y >= top && y <= priceBot) {
+        ctx.setLineDash([6, 5]); ctx.strokeStyle = C.orange; ctx.lineWidth = 1.5;
+        ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(plotW, y); ctx.stroke(); ctx.setLineDash([]);
+        ctx.font = "600 12px " + FONT; ctx.fillStyle = C.orange; ctx.fillText("Risk trailing stop", 4, y - 7);
+      }
     }
   }
 
@@ -152,5 +199,5 @@
     ctx.fillText(score == null ? "–" : String(Math.round(score)), S / 2, S / 2 + 1); ctx.textAlign = "left";
   }
 
-  window.DeskChart = { line, candles, ring };
+  window.DeskChart = { line, candles, ring, fmtP };
 })();
