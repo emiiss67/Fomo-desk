@@ -107,8 +107,10 @@
     if (v >= 1000) return v.toLocaleString("en-US", { maximumFractionDigits: 0 });
     if (v >= 1) return v.toFixed(v >= 100 ? 1 : 3);
     if (v >= 0.001) return v.toFixed(5).replace(/0+$/, "").replace(/\.$/, "");
-    const z = Math.floor(-Math.log10(v));                           // zeros after "0."
-    const digits = Math.round(v * Math.pow(10, z + 4)).toString().slice(0, 4).replace(/0+$/, "") || "0";
+    if (v <= 0) return v === 0 ? "0" : "-" + fmtP(-v);
+    let z = Math.floor(-Math.log10(v)), n = Math.round(v * Math.pow(10, z + 4));   // z = zeros after "0."
+    if (n >= 10000) { z -= 1; n = Math.round(n / 10); }                           // 0.0000099999 rounds up a digit
+    const digits = String(n).slice(0, 4).replace(/0+$/, "") || "0";
     return "0.0" + String(z).split("").map(d => SUB[+d]).join("") + digits;
   }
   function niceTicks(lo, hi, n) {
