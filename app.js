@@ -11,13 +11,16 @@
   const COLOR = { scanner: "cyan", auditor: "", analyst: "yellow", executor: "green", risk: "pink" };
   const RM = () => matchMedia("(prefers-reduced-motion: reduce)").matches;
 
-  // ---------- data path: #d=... once, then localStorage; fragment stripped ----------
-  if (location.hash.startsWith("#d=")) {
-    const dp = decodeURIComponent(location.hash.slice(3)).trim();
-    if (dp) localStorage.setItem("desk.d", dp);
-    history.replaceState(null, "", location.pathname + location.search + "#/home");
-  }
-  const DP = localStorage.getItem("desk.d");
+  // ---------- data path: kept in the URL fragment (never sent to the server) + localStorage ----------
+  const hashD = () => { const m = location.hash.match(/[#?&]d=([^&]+)/); return m ? decodeURIComponent(m[1]).trim() : null; };
+  const dp0 = hashD();
+  if (dp0) localStorage.setItem("desk.d", dp0);
+  if (location.hash.startsWith("#d=") && dp0) history.replaceState(null, "", location.pathname + location.search + "#/home?d=" + encodeURIComponent(dp0));
+  const DP = dp0 || localStorage.getItem("desk.d");
+  // keep ?d= in the fragment on every route, so "Open in Safari" and Add to Home Screen carry it
+  const keepD = () => { if (!DP || FIXTURE || hashD()) return; const h = location.hash || "#/home";
+    history.replaceState(null, "", location.pathname + location.search + h + (h.includes("?") ? "&" : "?") + "d=" + encodeURIComponent(DP)); };
+  keepD();
   const BASE = FIXTURE ? "/" + FIXTURE.replace(/[^\w-]/g, "") + "/" : (DP ? SUPA + encodeURIComponent(DP) + "/" : null);
 
   const S = { state: null, chart: null, account: null, activity: [], coin: {}, audit: {}, decisions: {},
@@ -437,6 +440,7 @@
     view.querySelectorAll("[data-range]").forEach(b => b.onclick = () => { S.range = b.dataset.range; chartPrev = null; render(); });
   }
   window.addEventListener("hashchange", async () => {
+    keepD();
     window.scrollTo(0, 0); render();
     if (S.state) { try { await loadRoute(null); } catch (e) {} render(); }
   });
