@@ -441,6 +441,12 @@
   }
   const dash = v => v == null ? "—" : v;
 
+  // header price: the newest real price we have (GeckoTerminal's last candle close if it is newer than the desk sample)
+  function livePrice(mint, c) {
+    const g = OHLC[mint], last = g && g.cs && g.cs.length ? g.cs[g.cs.length - 1] : null;
+    const deskT = c.price_ts ? Date.parse(c.price_ts) / 1000 : 0;
+    return last && (c.price == null || last.t + 60 > deskT) ? last.c : c.price;
+  }
   function chartSrc(mint, c) {
     const g = OHLC[mint];
     if (g && g.cs && g.cs.length >= 3) return `${g.label} candles · GeckoTerminal`;
@@ -460,7 +466,7 @@
     const html = backbar("Home") + `<div class="coinhead">
         <div class="cname">${logo(c.name || mint, c.logo, 44)}${esc(c.name || mint.slice(0, 4) + "…" + mint.slice(-3))}${c.audit_chip ? `<a href="#/audit/${encodeURIComponent(mint)}" class="chip ${chipOk ? "ok" : "bad"}">🛡 ${esc(c.audit_chip)}</a>` : ""}</div>
         <div class="sec">${esc(c.symbol || "")} · ${esc(c.chain)} · ${c.age_h == null ? "age n/a" : c.age_h < 1 ? Math.round(c.age_h * 60) + "m old" : Math.floor(c.age_h) + "h old"}</div>
-        <div class="big" style="font-size:44px;margin-top:10px">${price(c.price)}</div>
+        <div class="big" style="font-size:44px;margin-top:10px">${price(livePrice(mint, c))}</div>
         ${since != null ? `<div class="${since >= 0 ? "green" : "red"}">${since >= 0 ? "▲" : "▼"} ${Math.abs(since).toFixed(2)}% since entry</div>` : ""}
       </div>
       <div class="chartwrap gut"><canvas id="candles"></canvas></div>
