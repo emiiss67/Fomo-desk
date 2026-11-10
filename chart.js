@@ -118,59 +118,86 @@
     return out;
   }
 
-  /* Coin candles. list = [{t (unix s), o, h, l, c, vol}] oldest first (real OHLCV only; never invented).
-     Widths fill the plot by candle count; price axis on the right; time labels; volume underneath. */
+  /* Coin candles (DexScreener style). list = [{t (unix s), o, h, l, c, vol}] oldest first, real OHLCV only.
+     Fixed slot width (9px: ~6px body + gaps), right-aligned: a new coin is a compact cluster on the right, an older one fills
+     the width. Minutes with no trade between real candles are drawn as a thin grey dash at the previous close ("no trade",
+     not a candle; no price move invented). Drag sideways to scroll back. opts: {step (s), loading}. */
+  const SLOT = 9;
+  function fillGaps(cs, step) {
+    if (!step || cs.length < 2) return cs.map(c => Object.assign({}, c));
+    const out = [];
+    for (let i = 0; i < cs.length; i++) {
+      if (i) { let t = cs[i - 1].t + step, k = 0;
+        while (t < cs[i].t - step / 2 && k < 600) { const p = cs[i - 1].c; out.push({ t, o: p, h: p, l: p, c: p, vol: 0, gap: true }); t += step; k++; } }
+      out.push(Object.assign({}, cs[i]));
+    }
+    return out;
+  }
   function candles(canvas, list, exitLine, opts) {
+    opts = opts || {};
     const H = 280;
     const { ctx, w, h } = setup(canvas, H);
-    const cs = (list || []).filter(c => c && c.o != null && c.h != null && c.l != null && c.c != null && c.h > 0);
-    if (cs.length < 3) {
+    const real = (list || []).filter(c => c && c.o != null && c.h != null && c.l != null && c.c != null && c.h > 0);
+    const st = canvas._st || (canvas._st = { off: 0 });
+    canvas._draw = () => candles(canvas, list, exitLine, opts);
+    if (real.length < 3) {
       ctx.fillStyle = C.sec; ctx.font = "15px " + FONT; ctx.textAlign = "center";
-      ctx.fillText((opts && opts.loading) ? "Loading chart…" : "Chart builds as trades come in", w / 2, h / 2 - 10); ctx.textAlign = "left"; return;
+      ctx.fillText(opts.loading ? "Loading chart…" : "Chart builds as trades come in", w / 2, h / 2 - 10); ctx.textAlign = "left";
+      canvas._last = null; return null;
     }
+    const all = fillGaps(real, opts.step);
     const AX = 64, plotW = w - AX, top = 10, priceBot = Math.round(h * 0.70), volTop = Math.round(h * 0.75), volBot = h - 22;
-    let lo = Math.min(...cs.map(c => c.l)), hi = Math.max(...cs.map(c => c.h));
+    const fit = Math.floor(plotW / SLOT);
+    st.off = Math.max(0, Math.min(st.off, Math.max(0, all.length - fit)));
+    const end = all.length - Math.round(st.off), cs = all.slice(Math.max(0, end - fit), end);
+    const n = cs.length, bw = Math.max(2, Math.round(SLOT * 0.7));
+    const X = i => plotW - (n - i) * SLOT + SLOT / 2;                     // right-aligned
+    const vis = cs.filter(c => !c.gap);
+    let lo = Math.min(...(vis.length ? vis : cs).map(c => c.l)), hi = Math.max(...(vis.length ? vis : cs).map(c => c.h));
     if (exitLine != null && exitLine > lo * 0.5 && exitLine < hi * 1.5) { lo = Math.min(lo, exitLine); hi = Math.max(hi, exitLine); }
     if (hi - lo <= hi * 1e-6) { hi *= 1.02; lo *= 0.98; }
     const pad = (hi - lo) * 0.06; lo -= pad; hi += pad;
     const Y = v => priceBot - (v - lo) / (hi - lo) * (priceBot - top);
-    const n = cs.length, cw = plotW / n, bw = Math.max(1, Math.min(14, cw * 0.72));
-    const X = i => i * cw + cw / 2;
-    // grid + price axis
     ctx.font = "11px " + FONT; ctx.textBaseline = "middle";
     niceTicks(lo, hi, 4).forEach(v => {
       const y = Math.round(Y(v)) + 0.5; if (y < top || y > priceBot) return;
       ctx.strokeStyle = "rgba(84,84,88,0.35)"; ctx.lineWidth = 1; ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(plotW, y); ctx.stroke();
       ctx.fillStyle = C.ter; ctx.fillText(fmtP(v), plotW + 6, y);
     });
-    // volume
-    const vols = cs.map(c => (c.vol != null && c.vol > 0) ? c.vol : 0), vmax = Math.max(...vols);
+    const vmax = Math.max(0, ...cs.map(c => c.gap ? 0 : (c.vol > 0 ? c.vol : 0)));
     cs.forEach((c, i) => {
-      const up = c.c >= c.o, x = X(i);
-      if (vmax > 0 && vols[i] > 0) { const vh = Math.max(1, (volBot - volTop) * vols[i] / vmax);
-        ctx.fillStyle = up ? "rgba(0,211,90,0.40)" : "rgba(255,69,58,0.40)"; ctx.fillRect(x - bw / 2, volBot - vh, bw, vh); }
+      if (c.gap || !(vmax > 0 && c.vol > 0)) return;
+      const vh = Math.max(1, (volBot - volTop) * c.vol / vmax), x = X(i);
+      ctx.fillStyle = c.c >= c.o ? "rgba(0,211,90,0.40)" : "rgba(255,69,58,0.40)"; ctx.fillRect(Math.round(x - bw / 2), volBot - vh, bw, vh);
     });
-    // candles: wick + body
     cs.forEach((c, i) => {
-      const up = c.c >= c.o, col = up ? C.green : C.red, x = Math.round(X(i)) + 0.5;
+      const x = X(i);
+      if (c.gap) { ctx.fillStyle = "rgba(235,235,245,0.22)"; ctx.fillRect(Math.round(x - bw / 2), Math.round(Y(c.c)), bw, 1); return; }
+      const up = c.c >= c.o, col = up ? C.green : C.red, xs = Math.round(x) + 0.5;
       ctx.strokeStyle = col; ctx.lineWidth = 1;
-      ctx.beginPath(); ctx.moveTo(x, Y(c.h)); ctx.lineTo(x, Y(c.l)); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(xs, Y(c.h)); ctx.lineTo(xs, Y(c.l)); ctx.stroke();
       const y1 = Y(Math.max(c.o, c.c)), y2 = Y(Math.min(c.o, c.c));
-      ctx.fillStyle = col; ctx.fillRect(X(i) - bw / 2, y1, bw, Math.max(1, y2 - y1));
+      ctx.fillStyle = col; ctx.fillRect(Math.round(x - bw / 2), y1, bw, Math.max(1, y2 - y1));
     });
-    // time labels
+    // sparse time labels on round times, >= 64px apart
+    const step = opts.step || 60, every = Math.max(1, Math.ceil(64 / SLOT)), lblStep = step * every;
+    const nice = [60, 120, 300, 600, 900, 1800, 3600, 7200, 14400].find(x => x >= lblStep) || lblStep;
     ctx.fillStyle = C.ter; ctx.textBaseline = "alphabetic"; ctx.textAlign = "center";
     const hm = t => new Date(t * 1000).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", hour12: false });
-    const k = Math.min(4, n);
-    for (let j = 0; j < k; j++) { const i = Math.round((n - 1) * (j + 0.5) / k); ctx.fillText(hm(cs[i].t), Math.min(plotW - 18, Math.max(18, X(i))), h - 6); }
+    let lastX = -1e9;
+    cs.forEach((c, i) => { const x = X(i); if (c.t % nice === 0 && x - lastX >= 56 && x > 16 && x < plotW - 16) { ctx.fillText(hm(c.t), x, h - 6); lastX = x; } });
+    if (lastX < 0 && n) ctx.fillText(hm(cs[0].t), Math.max(18, X(0)), h - 6);
     ctx.textAlign = "left";
-    // last price tag on the axis
-    const last = cs[n - 1], ly = Math.round(Y(last.c)) + 0.5, lc = last.c >= last.o ? C.green : C.red;
-    ctx.setLineDash([3, 3]); ctx.strokeStyle = lc; ctx.globalAlpha = 0.7; ctx.beginPath(); ctx.moveTo(0, ly); ctx.lineTo(plotW, ly); ctx.stroke();
-    ctx.setLineDash([]); ctx.globalAlpha = 1;
-    ctx.fillStyle = lc; roundRect(ctx, plotW + 2, ly - 9, AX - 4, 18, 4); ctx.fill();
-    ctx.fillStyle = "#000"; ctx.font = "600 11px " + FONT; ctx.textBaseline = "middle"; ctx.fillText(fmtP(last.c), plotW + 6, ly);
-    ctx.textBaseline = "alphabetic";
+    if (st.off > 0) { ctx.fillStyle = C.ter; ctx.font = "11px " + FONT; ctx.fillText("‹ history", 4, top + 4); }
+    // last price line + tag (animates from the previous close on update)
+    const last = cs[n - 1], lc = last.c >= last.o ? C.green : C.red;
+    const drawTag = v => {
+      const ly = Math.round(Y(v)) + 0.5;
+      ctx.setLineDash([3, 3]); ctx.strokeStyle = lc; ctx.globalAlpha = 0.7; ctx.beginPath(); ctx.moveTo(0, ly); ctx.lineTo(plotW, ly); ctx.stroke();
+      ctx.setLineDash([]); ctx.globalAlpha = 1;
+      ctx.fillStyle = lc; roundRect(ctx, plotW + 2, ly - 9, AX - 4, 18, 4); ctx.fill();
+      ctx.fillStyle = "#000"; ctx.font = "600 11px " + FONT; ctx.textBaseline = "middle"; ctx.fillText(fmtP(v), plotW + 6, ly); ctx.textBaseline = "alphabetic";
+    };
     if (exitLine != null) {
       const y = Y(exitLine);
       if (y >= top && y <= priceBot) {
@@ -179,6 +206,22 @@
         ctx.font = "600 12px " + FONT; ctx.fillStyle = C.orange; ctx.fillText("Risk trailing stop", 4, y - 7);
       }
     }
+    const prevC = canvas._lastC; canvas._lastC = last.c;
+    if (prevC != null && prevC !== last.c && !RM() && !st.off) {
+      const snap = ctx.getImageData(0, 0, canvas.width, canvas.height), dpr = window.devicePixelRatio || 1;
+      anim(450, p => { ctx.putImageData(snap, 0, 0); ctx.setTransform(dpr, 0, 0, dpr, 0, 0); drawTag(prevC + (last.c - prevC) * p); });
+    } else drawTag(last.c);
+    // drag to scroll history (pointer events, once per canvas)
+    if (!canvas._drag) { canvas._drag = true; canvas.style.touchAction = "pan-y";
+      let x0 = null, o0 = 0;
+      canvas.addEventListener("pointerdown", e => { x0 = e.clientX; o0 = canvas._st.off; });
+      canvas.addEventListener("pointermove", e => { if (x0 == null) return; canvas._st.off = Math.max(0, o0 + (e.clientX - x0) / SLOT); canvas._draw(); });
+      ["pointerup", "pointercancel", "pointerleave"].forEach(ev => canvas.addEventListener(ev, () => { x0 = null; }));
+      canvas.addEventListener("dblclick", () => { canvas._st.off = 0; canvas._draw(); }); }
+    // where the live candle is, so the page can make it breathe (CSS, GPU)
+    const lx = X(n - 1);
+    canvas._last = st.off ? null : { x: lx, y: Y(Math.max(last.o, last.c)), h: Math.max(4, Y(Math.min(last.o, last.c)) - Y(Math.max(last.o, last.c))), w: bw, up: last.c >= last.o };
+    return canvas._last;
   }
 
   /* Score ring 0-100, green from the threshold. */

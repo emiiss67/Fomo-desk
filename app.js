@@ -33,7 +33,7 @@
   } catch (e) {} }
   const BASE = FIXTURE ? "/" + FIXTURE.replace(/[^\w-]/g, "") + "/" : (DP ? SUPA + encodeURIComponent(DP) + "/" : null);
 
-  const S = { state: null, chart: null, account: null, activity: [], coin: {}, audit: {}, decisions: {},
+  const S = { tf: {}, chartOff: {}, state: null, chart: null, account: null, activity: [], coin: {}, audit: {}, decisions: {},
               missing: {}, err: false, lastGood: null, next: 0, range: "LIVE", search: "", showSearch: false };
   const view = document.getElementById("view"), offline = document.getElementById("offline");
   let chartPrev = null, odoPrev = null, beam = {}, execAnim = null;
@@ -69,32 +69,118 @@
     if (!seenAt.has(key)) seenAt.set(key, seenReady ? now : 0);
     return seenReady && now - seenAt.get(key) < 1500 ? " pop" : "";
   }
-  // confetti on a profitable closed trade (a new "Sold" activity row with a + value), once per row
-  const cheered = new Set(); let cheerReady = false;
-  function checkConfetti() {
-    const rows = (S.activity[0] && S.activity[0].rows) || [];
-    const wins = rows.filter(r => r.kind === "sold" && /^\+/.test(String(r.value || "")));
-    const fresh = wins.filter(r => !cheered.has(r.id));
-    wins.forEach(r => cheered.add(r.id));
-    if (cheerReady && fresh.length && !RM()) confetti();
-    cheerReady = true;
-  }
-  function confetti() {
-    const c = document.createElement("canvas"); c.className = "confetti"; document.body.appendChild(c);
-    const dpr = window.devicePixelRatio || 1, W = innerWidth, H = innerHeight;
-    c.width = W * dpr; c.height = H * dpr; const x = c.getContext("2d"); x.scale(dpr, dpr);
-    const cols = ["#00d35a", "#ffd60a", "#64d2ff", "#ff6b9a", "#ffffff", "#ff9f0a"];
-    const ps = Array.from({ length: 140 }, (_, i) => ({ x: W / 2 + (Math.random() - .5) * 80, y: H * .35, vx: (Math.random() - .5) * 13,
-      vy: -Math.random() * 13 - 4, r: Math.random() * Math.PI, vr: (Math.random() - .5) * .3, w: 6 + Math.random() * 6, h: 4 + Math.random() * 6, c: cols[i % cols.length] }));
-    const t0 = performance.now();
-    const step = t => { const k = (t - t0) / 1000; x.clearRect(0, 0, W, H);
-      ps.forEach(p => { p.vy += .35; p.vx *= .99; p.x += p.vx; p.y += p.vy; p.r += p.vr;
-        x.save(); x.translate(p.x, p.y); x.rotate(p.r); x.globalAlpha = Math.max(0, 1 - Math.max(0, k - 1.6)); x.fillStyle = p.c; x.fillRect(-p.w / 2, -p.h / 2, p.w, p.h); x.restore(); });
-      if (k < 2.6) requestAnimationFrame(step); else c.remove(); };
-    requestAnimationFrame(step);
-    if (navigator.vibrate) try { navigator.vibrate(30); } catch (e) {}
-  }
   const ago = iso => { if (!iso) return ""; const m = Math.max(0, Math.round((Date.now() - new Date(iso)) / 60000)); return m < 60 ? m + "m" : Math.floor(m / 60) + "h"; };
+
+  // ================= effects (all off under prefers-reduced-motion) =================
+  // ticker: a number that changed since the last render rolls in and glows green/red
+  const lastVal = new Map();
+  function tick(key, v, fmt) {
+    const prev = lastVal.get(key); lastVal.set(key, v);
+    const dir = prev == null || v == null || prev === v || RM() ? "" : v > prev ? " up" : " down";
+    return `<span class="tick${dir}">${esc(fmt(v))}</span>`;
+  }
+  function breathe(lc) {
+    const b = document.getElementById("breath"); if (!b) return;
+    if (!lc || RM()) { b.hidden = true; return; }
+    b.hidden = false; b.className = "breath " + (lc.up ? "up" : "down");
+    b.style.transform = `translate(${lc.x - lc.w / 2 + 16}px, ${lc.y}px)`; b.style.width = lc.w + "px"; b.style.height = lc.h + "px";
+  }
+  // one shared overlay canvas for bursts, confetti and coin rain; rAF only while something is alive
+  const FX = { parts: [], cv: null, run: false };
+  function fxCanvas() {
+    if (!FX.cv) { FX.cv = document.createElement("canvas"); FX.cv.className = "confetti"; document.body.appendChild(FX.cv); }
+    const dpr = window.devicePixelRatio || 1;
+    if (FX.cv.width !== innerWidth * dpr) { FX.cv.width = innerWidth * dpr; FX.cv.height = innerHeight * dpr; }
+    return FX.cv;
+  }
+  function fxLoop() {
+    if (FX.run) return; FX.run = true;
+    const cv = fxCanvas(), x = cv.getContext("2d"), dpr = window.devicePixelRatio || 1;
+    const step = () => {
+      x.setTransform(dpr, 0, 0, dpr, 0, 0); x.clearRect(0, 0, innerWidth, innerHeight);
+      FX.parts = FX.parts.filter(p => p.life > 0);
+      FX.parts.forEach(p => {
+        p.vy += p.g; p.vx *= p.drag; p.vy *= p.drag; p.x += p.vx; p.y += p.vy; p.r += p.vr; p.life -= 1;
+        x.save(); x.globalAlpha = Math.min(1, p.life / 30) * p.a; x.translate(p.x, p.y); x.rotate(p.r);
+        if (p.kind === "coin") { const sx = Math.abs(Math.cos(p.r * 2)); x.scale(Math.max(.15, sx), 1);
+          x.fillStyle = "#ffd60a"; x.beginPath(); x.arc(0, 0, p.s, 0, Math.PI * 2); x.fill();
+          x.strokeStyle = "#b8860b"; x.lineWidth = 2; x.stroke(); x.fillStyle = "#8a6400"; x.font = `700 ${p.s}px -apple-system,sans-serif`;
+          x.textAlign = "center"; x.textBaseline = "middle"; x.fillText("$", 0, 1); }
+        else if (p.kind === "dot") { x.fillStyle = p.c; x.shadowColor = p.c; x.shadowBlur = 8; x.beginPath(); x.arc(0, 0, p.s, 0, Math.PI * 2); x.fill(); }
+        else { x.fillStyle = p.c; x.fillRect(-p.s, -p.s * .6, p.s * 2, p.s * 1.2); }
+        x.restore();
+      });
+      if (FX.parts.length) requestAnimationFrame(step); else { x.clearRect(0, 0, innerWidth, innerHeight); FX.run = false; }
+    };
+    requestAnimationFrame(step);
+  }
+  const COLS = ["#00d35a", "#ffd60a", "#64d2ff", "#ff6b9a", "#ffffff", "#ff9f0a"];
+  function burst(cx, cy, col, n) {            // a coin passed the Auditor / a new signal
+    if (RM()) return;
+    for (let i = 0; i < (n || 28); i++) { const a = Math.random() * Math.PI * 2, v = 2 + Math.random() * 5;
+      FX.parts.push({ kind: "dot", x: cx, y: cy, vx: Math.cos(a) * v, vy: Math.sin(a) * v, g: .04, drag: .96, r: 0, vr: 0, s: 1.5 + Math.random() * 2.5, c: col || COLS[i % 4], a: 1, life: 50 + Math.random() * 30 }); }
+    fxLoop();
+  }
+  function confetti() {                        // bigger confetti + coin rain on a profitable Sold
+    if (RM()) return;
+    const W = innerWidth, H = innerHeight;
+    for (let i = 0; i < 160; i++) FX.parts.push({ kind: "rect", x: W / 2 + (Math.random() - .5) * 120, y: H * .38, vx: (Math.random() - .5) * 15, vy: -Math.random() * 14 - 4,
+      g: .32, drag: .99, r: Math.random() * 3, vr: (Math.random() - .5) * .35, s: 3 + Math.random() * 3.5, c: COLS[i % COLS.length], a: 1, life: 150 + Math.random() * 40 });
+    for (let i = 0; i < 26; i++) FX.parts.push({ kind: "coin", x: Math.random() * W, y: -20 - Math.random() * H * .6, vx: (Math.random() - .5) * 1.2, vy: 2 + Math.random() * 3,
+      g: .08, drag: .995, r: Math.random() * 3, vr: .05 + Math.random() * .08, s: 9 + Math.random() * 5, a: 1, life: 190 });
+    fxLoop();
+    if (navigator.vibrate) try { navigator.vibrate([20, 40, 20]); } catch (e) {}
+  }
+  function stopShake() {                       // red shake on a stop-loss
+    if (RM()) return;
+    document.body.classList.remove("shake"); void document.body.offsetWidth; document.body.classList.add("shake");
+    setTimeout(() => document.body.classList.remove("shake"), 700);
+    if (navigator.vibrate) try { navigator.vibrate(60); } catch (e) {}
+  }
+  // new events since the last poll (never on the first load)
+  const evSeen = { ready: false, rows: new Set(), aud: null, sig: null };
+  function checkEvents() {
+    const rows = (S.activity[0] && S.activity[0].rows) || [];
+    const fresh = rows.filter(r => !evSeen.rows.has(r.id)); rows.forEach(r => evSeen.rows.add(r.id));
+    const au = card("auditor"), ac = au && au.current, audKey = ac && ac.text === "8/8 → Executor" ? ac.mint : null;
+    const ex = card("executor"), sigKey = ex && ex.last ? ex.last.mint + ex.last.status : null;
+    if (evSeen.ready) {
+      if (fresh.some(r => r.kind === "sold" && /^\+/.test(String(r.value || "")))) confetti();
+      if (fresh.some(r => r.kind === "stopped")) stopShake();
+      const W = innerWidth;
+      if (audKey && audKey !== evSeen.aud) burst(W / 2, innerHeight * .45, "#00d35a", 34);
+      if (sigKey && sigKey !== evSeen.sig) burst(W / 2, innerHeight * .45, "#64d2ff", 28);
+    }
+    evSeen.aud = audKey; evSeen.sig = sigKey; evSeen.ready = true;
+  }
+  // subtle drifting particle background: ~40 low-alpha dots, one rAF loop, paused while the tab is hidden
+  (function particleBg() {
+    if (RM()) return;
+    const cv = document.createElement("canvas"); cv.className = "bgfx"; document.body.prepend(cv);
+    const x = cv.getContext("2d"); let W, H, dpr, ps, raf = null;
+    const size = () => { dpr = Math.min(2, window.devicePixelRatio || 1); W = innerWidth; H = innerHeight; cv.width = W * dpr; cv.height = H * dpr; };
+    size(); addEventListener("resize", size);
+    ps = Array.from({ length: 40 }, () => ({ x: Math.random() * W, y: Math.random() * H, vx: (Math.random() - .5) * .15, vy: -.05 - Math.random() * .2,
+      s: .6 + Math.random() * 1.6, a: .05 + Math.random() * .12, c: Math.random() < .5 ? "100,210,255" : Math.random() < .5 ? "0,211,90" : "255,255,255" }));
+    const step = () => { x.setTransform(dpr, 0, 0, dpr, 0, 0); x.clearRect(0, 0, W, H);
+      ps.forEach(p => { p.x += p.vx; p.y += p.vy; if (p.y < -5) { p.y = H + 5; p.x = Math.random() * W; } if (p.x < -5) p.x = W + 5; if (p.x > W + 5) p.x = -5;
+        x.fillStyle = `rgba(${p.c},${p.a})`; x.beginPath(); x.arc(p.x, p.y, p.s, 0, 6.283); x.fill(); });
+      raf = requestAnimationFrame(step); };
+    const go = () => { if (raf == null && !document.hidden) raf = requestAnimationFrame(step); };
+    document.addEventListener("visibilitychange", () => { if (document.hidden) { cancelAnimationFrame(raf); raf = null; } else go(); });
+    go();
+  })();
+  // ripple on taps (rows, cards, buttons, tabs)
+  document.addEventListener("pointerdown", e => {
+    if (RM()) return;
+    const el = e.target.closest && e.target.closest("a.row, .acard, button, .cta, .tab, .feed .fr, .chip");
+    if (!el) return;
+    const r = el.getBoundingClientRect(), d = Math.max(r.width, r.height) * 2, sp = document.createElement("span");
+    sp.className = "ripple"; sp.style.width = sp.style.height = d + "px";
+    sp.style.left = (e.clientX - r.left - d / 2) + "px"; sp.style.top = (e.clientY - r.top - d / 2) + "px";
+    if (getComputedStyle(el).position === "static") el.style.position = "relative";
+    el.style.overflow = "hidden"; el.appendChild(sp); setTimeout(() => sp.remove(), 600);
+  }, { passive: true });
 
   function toast(t) { const el = document.getElementById("toast"); el.textContent = t; el.hidden = false; clearTimeout(toast.t); toast.t = setTimeout(() => el.hidden = true, 1800); }
 
@@ -130,7 +216,7 @@
         S.chart = chart; S.account = account;
         if (S.activity[0] !== act) S.activity = [act];
         S.state = st; changedSomething = true;
-        checkConfetti();
+        checkEvents();
         await loadRoute(first ? null : changed);
       }
       if (S.err) changedSomething = true;
@@ -413,11 +499,14 @@
   // ---------- real OHLCV: GeckoTerminal public API (no key, CORS *), fetched by the phone; ~30 calls/min/IP limit ----------
   // One request per coin per 30s, at most one in flight, 60s back-off after a 429/error. Desk prices are the fallback.
   const OHLC = {}; let gtBusy = false, gtPauseUntil = 0;
+  const TFS = { "1m": 1, "5m": 5, "15m": 15 };
+  const tfFor = (mint, ageH) => S.tf[mint] || (ageH != null && ageH > 3 ? "5m" : "1m");
+  const ohlcKey = (mint, ageH) => mint + "|" + tfFor(mint, ageH);
   function gtWanted(mint, pool, ageH) {
-    const o = OHLC[mint];
+    const key = ohlcKey(mint, ageH), o = OHLC[key];
     if (!pool || gtBusy || Date.now() < gtPauseUntil || (o && Date.now() - o.at < 30000)) return;
     gtBusy = true;
-    const tf = ageH != null && ageH > 3 ? { agg: 5, label: "5m" } : { agg: 1, label: "1m" };
+    const tf = { agg: TFS[tfFor(mint, ageH)], label: tfFor(mint, ageH) };
     const url = `https://api.geckoterminal.com/api/v2/networks/solana/pools/${encodeURIComponent(pool)}/ohlcv/minute?aggregate=${tf.agg}&limit=150&currency=usd`;
     fetch(url, { headers: { Accept: "application/json" }, referrerPolicy: "no-referrer", cache: "no-store" })
       .then(r => { if (r.status !== 200) throw new Error("HTTP " + r.status); return r.json(); })
@@ -425,9 +514,9 @@
         const l = (((j || {}).data || {}).attributes || {}).ohlcv_list || [];
         const cs = l.map(x => ({ t: +x[0], o: +x[1], h: +x[2], l: +x[3], c: +x[4], vol: +x[5] }))
           .filter(c => [c.t, c.o, c.h, c.l, c.c].every(isFinite)).sort((a, b) => a.t - b.t);
-        OHLC[mint] = { at: Date.now(), cs, label: tf.label };
+        OHLC[key] = { at: Date.now(), cs, label: tf.label, step: tf.agg * 60 };
       })
-      .catch(() => { gtPauseUntil = Date.now() + 60000; OHLC[mint] = Object.assign(OHLC[mint] || { cs: [] }, { at: Date.now(), failed: true }); })
+      .catch(() => { gtPauseUntil = Date.now() + 60000; OHLC[key] = Object.assign(OHLC[key] || { cs: [] }, { at: Date.now(), failed: true }); })
       .finally(() => { gtBusy = false; if (route().name === "coin" && decodeURIComponent(route().arg || "") === mint) render(); });
   }
   // Desk fallback: db.prices 1-minute OHLC. A minute with one sample has o=c; open it at the previous close so the
@@ -443,14 +532,14 @@
 
   // header price: the newest real price we have (GeckoTerminal's last candle close if it is newer than the desk sample)
   function livePrice(mint, c) {
-    const g = OHLC[mint], last = g && g.cs && g.cs.length ? g.cs[g.cs.length - 1] : null;
+    const g = OHLC[ohlcKey(mint, c.age_h)], last = g && g.cs && g.cs.length ? g.cs[g.cs.length - 1] : null;
     const deskT = c.price_ts ? Date.parse(c.price_ts) / 1000 : 0;
     return last && (c.price == null || last.t + 60 > deskT) ? last.c : c.price;
   }
   function chartSrc(mint, c) {
-    const g = OHLC[mint];
-    if (g && g.cs && g.cs.length >= 3) return `${g.label} candles · GeckoTerminal`;
-    return (c.candles || []).length >= 3 ? "1m candles · desk prices" : "";
+    const g = OHLC[ohlcKey(mint, c.age_h)], cur = tfFor(mint, c.age_h);
+    const src = g && g.cs && g.cs.length >= 3 ? "GeckoTerminal" : (c.candles || []).length >= 3 ? "desk prices · 1m" : "";
+    return `<span class="tfs">${c.pool ? Object.keys(TFS).map(k => `<button data-tf="${k}" class="${k === cur ? "on" : ""}">${k}</button>`).join("") : ""}</span><span>${src}</span>`;
   }
   function coinScreen(mint) {
     const loading = backbar("Home") + `<div class="gut">${sk(34, "60%")}${sk(18, "40%", "margin-top:8px")}${sk(56, "50%", "margin-top:14px")}</div>
@@ -466,10 +555,10 @@
     const html = backbar("Home") + `<div class="coinhead">
         <div class="cname">${logo(c.name || mint, c.logo, 44)}${esc(c.name || mint.slice(0, 4) + "…" + mint.slice(-3))}${c.audit_chip ? `<a href="#/audit/${encodeURIComponent(mint)}" class="chip ${chipOk ? "ok" : "bad"}">🛡 ${esc(c.audit_chip)}</a>` : ""}</div>
         <div class="sec">${esc(c.symbol || "")} · ${esc(c.chain)} · ${c.age_h == null ? "age n/a" : c.age_h < 1 ? Math.round(c.age_h * 60) + "m old" : Math.floor(c.age_h) + "h old"}</div>
-        <div class="big" style="font-size:44px;margin-top:10px">${price(livePrice(mint, c))}</div>
+        <div class="big pricebig" style="font-size:44px;margin-top:10px">${tick("p" + mint, livePrice(mint, c), price)}</div>
         ${since != null ? `<div class="${since >= 0 ? "green" : "red"}">${since >= 0 ? "▲" : "▼"} ${Math.abs(since).toFixed(2)}% since entry</div>` : ""}
       </div>
-      <div class="chartwrap gut"><canvas id="candles"></canvas></div>
+      <div class="chartwrap gut" style="position:relative"><canvas id="candles"></canvas><i id="breath" class="breath" hidden></i></div>
       <div class="chsrc">${chartSrc(mint, c)}</div>
       <div class="stats"><div><div class="k">Market cap</div><div class="vv">${kfmt(c.stats.marketCap)}</div></div>
         <div><div class="k">Liquidity</div><div class="vv">${kfmt(c.stats.liquidityUsd)}</div></div>
@@ -491,9 +580,14 @@
       <div class="spacer"></div>${safeUrl(c.link) ? `<a class="cta ${p && p.open ? "sell" : ""}" href="${esc(c.link)}" target="_blank" rel="noopener">${esc(c.button)}</a>` : ""}`;
     return { html, after() {
       gtWanted(mint, c.pool, c.age_h);
-      const g = OHLC[mint], gt = g && g.cs && g.cs.length >= 3 ? g.cs : null;
-      DeskChart.candles(document.getElementById("candles"), gt || deskCandles(c.candles), x ? x.risk_trailing_stop : null,
-                        { loading: !g && !!c.pool });
+      const g = OHLC[ohlcKey(mint, c.age_h)], gt = g && g.cs && g.cs.length >= 3 ? g.cs : null;
+      const cv = document.getElementById("candles");
+      if (cv && S.chartOff[mint] != null) cv._st = { off: S.chartOff[mint] };
+      const lastC = DeskChart.candles(cv, gt || deskCandles(c.candles), x ? x.risk_trailing_stop : null,
+                        { loading: !g && !!c.pool, step: gt ? g.step : 60 });
+      if (cv) cv.addEventListener("pointerup", () => { S.chartOff[mint] = cv._st.off; });
+      breathe(lastC);
+      view.querySelectorAll("[data-tf]").forEach(b => b.onclick = () => { S.tf[mint] = b.dataset.tf; S.chartOff[mint] = 0; render(); });
     } };
   }
 
@@ -561,7 +655,8 @@
     const o = typeof out === "string" ? { html: out } : out;
     const ae = document.activeElement && document.activeElement.id === "q";
     view.innerHTML = o.html;
-    if (navAnim && !RM()) { view.classList.remove("enter"); void view.offsetWidth; view.classList.add("enter"); }
+    if (navAnim && !RM()) { view.classList.remove("enter"); void view.offsetWidth; view.classList.add("enter");
+      view.querySelectorAll(".list > .row, .acard, .agentfull, .stats > div").forEach((el, i) => el.style.setProperty("--i", Math.min(i, 12))); }
     navAnim = false;
     if (S.state) seenReady = true;
     if (o.after) o.after();

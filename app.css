@@ -169,7 +169,8 @@ canvas{display:block;width:100%}
 .tab.on{color:#fff}
 
 /* loading skeleton */
-.sk{background:var(--card);border-radius:12px;animation:pulse 1.2s ease-in-out infinite alternate}
+.sk{border-radius:12px;background:linear-gradient(100deg,var(--card) 30%,#2a2a2d 50%,var(--card) 70%);background-size:300% 100%;animation:shimmer 1.4s linear infinite}
+@keyframes shimmer{from{background-position:100% 0}to{background-position:0 0}}
 @keyframes pulse{from{opacity:.5}to{opacity:1}}
 .toast{position:fixed;left:50%;bottom:calc(var(--tab) + 80px);transform:translateX(-50%);background:var(--card2);padding:10px 16px;border-radius:20px;font-size:15px;z-index:40}
 .gate{min-height:80vh;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;padding:0 32px}
@@ -203,8 +204,10 @@ canvas{display:block;width:100%}
 @keyframes popin{0%{transform:scale(.6) translateY(-8px);opacity:0}55%{transform:scale(1.06);opacity:1}100%{transform:none}}
 @keyframes flash{0%,30%{background:rgba(0,211,90,.28)}100%{background:transparent}}
 /* screen transitions */
-.view.enter{animation:enter .26s cubic-bezier(.2,.8,.2,1)}
-@keyframes enter{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:none}}
+.view.enter > :not(.cta){animation:enter .42s cubic-bezier(.2,1.25,.35,1) both}
+@keyframes enter{from{opacity:0;transform:translate3d(0,18px,0) scale(.985)}to{opacity:1;transform:none}}
+.view.enter .list > .row,.view.enter .acard,.view.enter .agentfull,.view.enter .stats > div{animation:rowin .45s cubic-bezier(.2,1.3,.4,1) both;animation-delay:calc(var(--i,0) * 35ms)}
+@keyframes rowin{from{opacity:0;transform:translate3d(0,14px,0)}to{opacity:1;transform:none}}
 /* press feedback + smooth state changes */
 a.row,a.acard,.feed .fr,.tab,.cta,.ranges button,.gbtn,.chip{transition:transform .15s ease,background-color .2s ease,opacity .2s ease;-webkit-tap-highlight-color:transparent}
 a.row:active,.feed .fr:active{background:var(--card2);transform:scale(.985)}
@@ -212,8 +215,33 @@ a.acard:active,.cta:active,.gbtn:active{transform:scale(.97)}
 .tab:active svg{transform:scale(.88)}.tab svg{transition:transform .15s ease}
 .ranges button{transition:background-color .2s ease,color .2s ease}
 .sd{transition:background-color .4s ease}
-.chsrc{color:var(--ter);font-size:11px;text-align:right;padding:2px var(--g) 0;min-height:14px}
+.chsrc{color:var(--ter);font-size:11px;padding:2px var(--g) 0;min-height:28px}
 .confetti{position:fixed;inset:0;width:100vw;height:100vh;pointer-events:none;z-index:50}
+
+/* ---- effects v9 ---- */
+.bgfx{position:fixed;inset:0;width:100vw;height:100vh;z-index:0;pointer-events:none}
+.view{position:relative;z-index:1}
+.ripple{position:absolute;border-radius:50%;background:rgba(255,255,255,.18);transform:scale(0);animation:ripple .55s ease-out forwards;pointer-events:none;will-change:transform,opacity}
+@keyframes ripple{to{transform:scale(1);opacity:0}}
+.tick{display:inline-block;will-change:transform}
+.tick.up{animation:tickup .6s cubic-bezier(.2,1.3,.4,1),glowg 1.2s ease-out}
+.tick.down{animation:tickdn .6s cubic-bezier(.2,1.3,.4,1),glowr 1.2s ease-out}
+@keyframes tickup{from{transform:translate3d(0,40%,0);opacity:.2}to{transform:none;opacity:1}}
+@keyframes tickdn{from{transform:translate3d(0,-40%,0);opacity:.2}to{transform:none;opacity:1}}
+@keyframes glowg{0%{color:var(--green);text-shadow:0 0 18px rgba(0,211,90,.8)}100%{color:inherit;text-shadow:none}}
+@keyframes glowr{0%{color:var(--red);text-shadow:0 0 18px rgba(255,69,58,.8)}100%{color:inherit;text-shadow:none}}
+.breath{position:absolute;left:0;top:0;border-radius:2px;pointer-events:none;will-change:opacity,box-shadow;animation:breathe 1.6s ease-in-out infinite}
+.breath.up{box-shadow:0 0 10px 2px rgba(0,211,90,.7)}.breath.down{box-shadow:0 0 10px 2px rgba(255,69,58,.7)}
+@keyframes breathe{0%,100%{opacity:.25}50%{opacity:1}}
+body.shake .view > :not(.cta){animation:shake .6s cubic-bezier(.36,.07,.19,.97)}
+body.shake::after{content:"";position:fixed;inset:0;pointer-events:none;z-index:45;box-shadow:inset 0 0 90px 20px rgba(255,69,58,.55);animation:redflash .7s ease-out forwards}
+@keyframes shake{10%,90%{transform:translate3d(-2px,0,0)}20%,80%{transform:translate3d(4px,0,0)}30%,50%,70%{transform:translate3d(-7px,0,0)}40%,60%{transform:translate3d(7px,0,0)}}
+@keyframes redflash{from{opacity:1}to{opacity:0}}
+.chsrc{display:flex;justify-content:space-between;align-items:center;gap:8px}
+.tfs{display:flex;gap:4px}
+.tfs button{height:28px;min-width:40px;border-radius:14px;font-size:12px;font-weight:600;color:var(--sec);background:transparent;border:0}
+.tfs button.on{background:var(--card);color:#fff}
+#candles{touch-action:pan-y}
 
 @media (prefers-reduced-motion: reduce){
   *{transition:none!important;animation:none!important}
