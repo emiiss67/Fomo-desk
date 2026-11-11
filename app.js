@@ -1077,10 +1077,10 @@
         ${tile("v1", "1h volume", kfmt(c.stats.volume1h))}${tile("bs", "1h buys / sells", c.stats.buys1h == null ? "—" : c.stats.buys1h + " / " + dash(c.stats.sells1h))}</div>
       <div class="chg glass">${[["5m", c.stats.change5m], ["1h", c.stats.change1h], ["24h", c.stats.change24h]].map(([k, v]) =>
         `<div><span class="k">${k}</span><span class="${v == null ? "ter" : v >= 0 ? "green" : "red"}">${v == null ? "—" : sgn(v, 1)}</span></div>`).join("")}</div>
-      ${c.pendingBuy && !p ? `<div class="card glass"><h3>${c.pendingBuy.mode === "LIVE" ? "Put this much on FOMO" : "Ticket"} · ${money(c.pendingBuy.sizeUsd)}</h3>
+      ${c.pendingBuy && (!p || c.pendingBuy.add) ? `<div class="card glass"><h3>${c.pendingBuy.add ? (c.pendingBuy.mode === "LIVE" ? "Put this much more on FOMO" : "Add") : (c.pendingBuy.mode === "LIVE" ? "Put this much on FOMO" : "Ticket")} · ${money(c.pendingBuy.sizeUsd)}</h3>
           ${c.pendingBuy.sizeNative != null ? `<div class="kv"><span class="sec">${esc(c.pendingBuy.nativeSymbol || "SOL")}</span><span>${nqty(c.pendingBuy.sizeNative)} ${esc(c.pendingBuy.nativeSymbol || "")}</span></div>` : ""}
           <div class="kv"><span class="sec">Share of stack</span><span>${c.pendingBuy.stackPct == null ? "—" : c.pendingBuy.stackPct + "%"}</span></div>
-          <div class="s wrap">${c.pendingBuy.mode === "LIVE" ? "Buy this amount inside FOMO, then tap Bought in Telegram." : "This is how much the desk sized for this coin."}</div></div>` : ""}
+          <div class="s wrap">${c.pendingBuy.mode === "LIVE" ? (c.pendingBuy.add ? "Buy this extra amount inside FOMO, then tap Bought in Telegram. The Sell button stays for the open position." : "Buy this amount inside FOMO, then tap Bought in Telegram.") : (c.pendingBuy.add ? "This is how much the desk wants to add on this dip." : "This is how much the desk sized for this coin.")}</div></div>` : ""}
       ${p ? `<div class="card glass"><h3>Your position · ${money(p.sizeUsd)} in · ${esc(p.agent)}</h3>
           <div class="kv"><span class="sec">Entry${mcOn ? " MC" : ""}</span><span>${disp(p.entryPrice)}</span></div>
           ${p.hold ? `<div class="kv"><span class="sec">Hold</span><span>owner hold · no stop / trail / timeout (rug still exits)</span></div>` : ""}
@@ -1257,8 +1257,8 @@
           })()}</div>
         </div>
         <div class="setrow" id="appver">
-          <div class="sl"><span>App version</span><span class="val">v22</span></div>
-          <div class="s wrap">If this isn’t v22, the phone is still on an old copy. Close the app from the app switcher and reopen it.</div>
+          <div class="sl"><span>App version</span><span class="val">v23</span></div>
+          <div class="s wrap">If this isn’t v23, the phone is still on an old copy. Close the app from the app switcher and reopen it.</div>
         </div>
       </div>
       <div class="grp">Notifications</div>
