@@ -1,5 +1,5 @@
 /* App shell cache only. Desk data (Supabase JSON) is never cached here. No web push on plan B. */
-const CACHE = "desk-shell-v21";
+const CACHE = "desk-shell-v22";
 const SHELL = ["./", "index.html", "app.css", "app.js", "chart.js", "manifest.json", "icons/icon-192.png"];
 self.addEventListener("install", e => e.waitUntil((async () => {
   const c = await caches.open(CACHE);

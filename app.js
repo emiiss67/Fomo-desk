@@ -622,7 +622,7 @@
       return `<div class="acard">${head}<div class="stat">${a.trades} trades</div>
         <div class="sub">${l && l.sizeUsd != null ? money(l.sizeUsd) : "—"} · ${a.stack_pct}% of stack</div>
         <div class="bar"><i id="execbar" style="width:${filled ? 100 : 0}%"></i></div>
-        <div class="foot"><span id="exectxt" class="${filled ? "green" : "sec"}">${l ? (filled ? "✓ Filled" : esc(l.status)) : "No signal yet"}</span>
+        <div class="foot"><span id="exectxt" class="${filled ? "green" : "sec"}">${l ? (filled ? "✓ Filled " + money(l.sizeUsd) : (l.status === "sent" ? "Put " + money(l.sizeUsd) + " on FOMO" : esc(l.status))) : "No signal yet"}</span>
         <span class="sec" style="margin-left:auto">${l ? `<a href="${coinHref(l.mint)}" class="cl">${logo(l.name, l.logo, 18)} ${esc(l.name)}</a>` : ""}</span></div></div>`;
     }
     const pills = `<span class="pill mono redp">${esc(a.pills.stop)}</span><span class="pill mono greenp">${esc(a.pills.trail)}</span>`;
@@ -639,7 +639,7 @@
       if (bar) { bar.style.transition = "none"; bar.style.width = "0%"; txt.textContent = "Executing... 0%"; txt.className = "sec";
         requestAnimationFrame(() => { bar.style.transition = ""; bar.style.width = "100%"; });
         const t0 = performance.now(); const step = t => { const p = Math.min(1, (t - t0) / 1200);
-          txt.textContent = p < 1 ? `Executing... ${Math.round(p * 100)}%` : "✓ Filled"; if (p >= 1) txt.className = "green"; else requestAnimationFrame(step); };
+          txt.textContent = p < 1 ? `Executing... ${Math.round(p * 100)}%` : ("✓ Filled" + (l.sizeUsd != null ? " " + money(l.sizeUsd) : "")); if (p >= 1) txt.className = "green"; else requestAnimationFrame(step); };
         requestAnimationFrame(step); }
     }
     execAnim = key;
@@ -677,7 +677,8 @@
   function enrichMarks(list) {
     return (list || []).map(m => {
       const kind = m.kind || (/^Bought /i.test(m.text || "") ? "bought" : (m.color === "red" ? "stopped" : "sold"));
-      const label = kind === "bought" ? "Buy" : (m.text || (kind === "stopped" ? "Stop" : "Sell"));
+      const size = m.sizeUsd != null ? money(m.sizeUsd) : "";
+      const label = kind === "bought" ? (size ? "Buy " + size : "Buy") : (m.text || (kind === "stopped" ? "Stop" : "Sell"));
       return { ...m, kind, label, name: markName({ ...m, kind }), logo: logoFor(m.mint) };
     });
   }
@@ -736,7 +737,7 @@
     const r = o.row, c = o.coin, p = c && c.position, since = p && p.since_entry_pct;
     const name = (r.title || "").replace(/^Bought /, "");
     return `<a class="row" href="${coinHref(r.mint)}">${logo(name, r.logo || (c && c.logo), 40)}<span class="main"><div class="t">${esc(name)}</div>
-      <div class="s">${p ? money(p.sizeUsd) + " in · entry " + price(p.entryPrice) : esc(r.subtitle || "")}</div></span>
+      <div class="s">${p ? money(p.sizeUsd) + " in · entry " + price(p.entryPrice) : esc(r.value || r.subtitle || "")}</div></span>
       <span class="v">${since == null ? '<span class="ter">—</span>' : `<span class="cpill ${since >= 0 ? "up" : "down"}">${sgn(since, 1)}</span>`}</span></a>`;
   }
   const STAGE = { watching: ["Watching", "cyan"], killed: ["Skipped", "ter"], passed: ["→ Auditor", "cyan"], auditing: ["Auditing", "cyan"],
@@ -1076,6 +1077,10 @@
         ${tile("v1", "1h volume", kfmt(c.stats.volume1h))}${tile("bs", "1h buys / sells", c.stats.buys1h == null ? "—" : c.stats.buys1h + " / " + dash(c.stats.sells1h))}</div>
       <div class="chg glass">${[["5m", c.stats.change5m], ["1h", c.stats.change1h], ["24h", c.stats.change24h]].map(([k, v]) =>
         `<div><span class="k">${k}</span><span class="${v == null ? "ter" : v >= 0 ? "green" : "red"}">${v == null ? "—" : sgn(v, 1)}</span></div>`).join("")}</div>
+      ${c.pendingBuy && !p ? `<div class="card glass"><h3>${c.pendingBuy.mode === "LIVE" ? "Put this much on FOMO" : "Ticket"} · ${money(c.pendingBuy.sizeUsd)}</h3>
+          ${c.pendingBuy.sizeNative != null ? `<div class="kv"><span class="sec">${esc(c.pendingBuy.nativeSymbol || "SOL")}</span><span>${nqty(c.pendingBuy.sizeNative)} ${esc(c.pendingBuy.nativeSymbol || "")}</span></div>` : ""}
+          <div class="kv"><span class="sec">Share of stack</span><span>${c.pendingBuy.stackPct == null ? "—" : c.pendingBuy.stackPct + "%"}</span></div>
+          <div class="s wrap">${c.pendingBuy.mode === "LIVE" ? "Buy this amount inside FOMO, then tap Bought in Telegram." : "This is how much the desk sized for this coin."}</div></div>` : ""}
       ${p ? `<div class="card glass"><h3>Your position · ${money(p.sizeUsd)} in · ${esc(p.agent)}</h3>
           <div class="kv"><span class="sec">Entry${mcOn ? " MC" : ""}</span><span>${disp(p.entryPrice)}</span></div>
           ${p.hold ? `<div class="kv"><span class="sec">Hold</span><span>owner hold · no stop / trail / timeout (rug still exits)</span></div>` : ""}
@@ -1252,8 +1257,8 @@
           })()}</div>
         </div>
         <div class="setrow" id="appver">
-          <div class="sl"><span>App version</span><span class="val">v21</span></div>
-          <div class="s wrap">If this isn’t v21, the phone is still on an old copy. Close the app from the app switcher and reopen it.</div>
+          <div class="sl"><span>App version</span><span class="val">v22</span></div>
+          <div class="s wrap">If this isn’t v22, the phone is still on an old copy. Close the app from the app switcher and reopen it.</div>
         </div>
       </div>
       <div class="grp">Notifications</div>

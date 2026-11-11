@@ -77,7 +77,9 @@
     const grow = pts.length > prevLen && prevLen > 0;
     function shortLabel(m) {
       if (m.label) return m.label;
-      if (m.kind === "bought" || /^Bought /i.test(m.text || "")) return "Buy";
+      if (m.kind === "bought" || /^Bought /i.test(m.text || "")) {
+        return (m.sizeUsd != null && isFinite(m.sizeUsd)) ? "Buy $" + Number(m.sizeUsd).toFixed(2) : "Buy";
+      }
       return m.text || "";
     }
     function layoutMarks(ctx, w, X, yAt) {
