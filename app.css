@@ -386,3 +386,145 @@ html[data-theme="daylight"]{--bg:#eef0f4;--text:#111318;--sec:rgba(17,19,24,.62)
   --cta-text:#ffffff;--tabbar:rgba(255,255,255,.82);--candle-up:#007a4d;--candle-down:#d0163c}
 html[data-theme="daylight"] .hero{box-shadow:0 10px 32px rgba(17,19,24,.08)}
 html[data-theme="daylight"] .tabbar,html[data-theme="daylight"] .ctabar,html[data-theme="daylight"] .hero,html[data-theme="daylight"] .navbar{-webkit-backdrop-filter:saturate(140%) blur(16px);backdrop-filter:saturate(140%) blur(16px)}
+
+
+/* ================= v17: new layout (nova), typography, density, effects ================= */
+html[data-ui="nova"]{--r:24px;--tab:calc(70px + env(safe-area-inset-bottom))}
+html[data-ui="nova"] body{
+  background:
+    radial-gradient(90% 50% at 8% -8%,var(--wash),transparent 55%),
+    radial-gradient(80% 45% at 110% 6%,var(--wash2),transparent 55%),
+    radial-gradient(70% 28% at 50% 110%,color-mix(in srgb,var(--accent) 8%,transparent),transparent 60%),
+    var(--bg);
+}
+html[data-ui="nova"] .view{padding-bottom:calc(var(--tab) + 28px)}
+html[data-ui="nova"] .navbar{height:56px}
+html[data-ui="nova"] .navbar .title{font-size:16px;letter-spacing:-.02em}
+html[data-ui="nova"] .avatar{box-shadow:0 0 0 1px var(--hair)}
+html[data-ui="nova"] .search input{border-radius:16px;height:46px;border:1px solid var(--hair)}
+html[data-ui="nova"] .hero{
+  margin:8px var(--g) 0;padding:18px 0 16px;border-radius:28px;
+  background:
+    linear-gradient(180deg,color-mix(in srgb,var(--text) 6%,transparent),transparent 30%),
+    linear-gradient(160deg,var(--wash),var(--card) 52%);
+  box-shadow:0 24px 50px rgba(0,0,0,.35),inset 0 1px 0 color-mix(in srgb,var(--text) 10%,transparent);
+}
+html[data-ui="nova"] .hero .herotop{text-transform:none;letter-spacing:-.01em;font-size:13px;font-weight:600}
+html[data-ui="nova"] .hero .big{font-size:56px;font-weight:700;letter-spacing:-2.6px;line-height:1}
+html[data-ui="nova"] .hero .today{margin-top:6px;font-size:16px}
+html[data-ui="nova"] .ranges button{height:30px;min-width:40px;border-radius:10px;font-size:12px;font-weight:700}
+html[data-ui="nova"] .ranges button.on{background:color-mix(in srgb,var(--accent) 18%,transparent);color:var(--accent)}
+html[data-ui="nova"] .achip{height:26px;border-radius:9px}
+html[data-ui="nova"] .sh{padding:26px var(--g) 8px}
+html[data-ui="nova"] .sh h2{font-size:17px;font-weight:700;letter-spacing:-.03em}
+html[data-ui="nova"] .list,html[data-ui="nova"] .card,html[data-ui="nova"] .agentfull,html[data-ui="nova"] .tile,html[data-ui="nova"] .chg,html[data-ui="nova"] .chartcard,html[data-ui="nova"] .acard{
+  border-radius:var(--r);box-shadow:0 10px 28px rgba(0,0,0,.22)
+}
+html[data-ui="nova"] .row{min-height:66px;padding:13px 16px}
+html[data-ui="nova"] .row .t{font-size:16px;letter-spacing:-.02em}
+html[data-ui="nova"] .empty{padding:40px 18px;color:var(--ter)}
+html[data-ui="nova"] .acard{border-radius:26px;padding:22px}
+html[data-ui="nova"] .acard .stat{font-size:36px;font-weight:700;letter-spacing:-1.2px}
+html[data-ui="nova"] .agentfull{border-radius:24px;padding:18px}
+html[data-ui="nova"] .pricebig{font-size:48px;font-weight:700;letter-spacing:-1.8px}
+html[data-ui="nova"] .coinhead .cname{font-size:22px;letter-spacing:-.03em}
+html[data-ui="nova"] .chartcard{background:color-mix(in srgb,var(--bg) 55%,var(--card));padding:12px 0 8px}
+html[data-ui="nova"] .tiles{gap:10px}
+html[data-ui="nova"] .tile{padding:14px}
+html[data-ui="nova"] .tile svg{width:16px;height:16px;padding:6px;box-sizing:content-box;background:color-mix(in srgb,var(--accent) 12%,transparent);border-radius:10px;stroke:var(--accent)}
+html[data-ui="nova"] .tile .vv{font-size:20px;letter-spacing:-.03em}
+html[data-ui="nova"] .chg{padding:2px 0}
+html[data-ui="nova"] .chg div{display:flex;flex-direction:column;align-items:center;gap:2px;padding:12px 8px;flex:1;text-align:center}
+html[data-ui="nova"] .chg .k{font-size:11px;color:var(--ter)}
+html[data-ui="nova"] .chg div > span:last-child{font-size:16px;font-weight:700}
+html[data-ui="nova"] .tabbar{
+  left:12px;right:12px;bottom:calc(8px + env(safe-area-inset-bottom));height:58px;padding:0;
+  border-radius:22px;border:1px solid var(--hair);background:var(--tabbar);
+  box-shadow:0 16px 40px rgba(0,0,0,.45);overflow:hidden
+}
+html[data-ui="nova"] .tabind{top:6px;height:46px}
+html[data-ui="nova"] .tabind::before{width:64px;height:46px;margin-left:-32px;border-radius:16px;background:color-mix(in srgb,var(--accent) 20%,transparent);box-shadow:none}
+html[data-ui="nova"] .tab{gap:1px;font-size:10px;font-weight:600}
+html[data-ui="nova"] .tab svg{width:22px;height:22px}
+html[data-ui="nova"] .ctabar{bottom:var(--tab);background:transparent;border:0;padding:0 var(--g) 8px;-webkit-backdrop-filter:none;backdrop-filter:none}
+html[data-ui="nova"] .ctabar .cta{height:54px;border-radius:18px;font-size:17px}
+html[data-ui="nova"] .spacer{height:calc(54px + 16px + 24px)}
+html[data-ui="nova"] .toast{bottom:calc(var(--tab) + 16px);border:1px solid var(--hair)}
+html[data-ui="nova"] .seg span.on,html[data-ui="nova"] .seg button.on{background:color-mix(in srgb,var(--accent) 18%,transparent);color:var(--accent)}
+html[data-ui="nova"] .grp{font-size:12px;font-weight:600;letter-spacing:.01em;padding-top:26px}
+html[data-ui="nova"] .rptsum .rptpnl{font-size:40px;letter-spacing:-1.2px}
+html[data-ui="nova"][data-theme="daylight"] .hero,
+html[data-ui="nova"][data-theme="daylight"] .list,
+html[data-ui="nova"][data-theme="daylight"] .card,
+html[data-ui="nova"][data-theme="daylight"] .agentfull,
+html[data-ui="nova"][data-theme="daylight"] .tile,
+html[data-ui="nova"][data-theme="daylight"] .chg,
+html[data-ui="nova"][data-theme="daylight"] .chartcard,
+html[data-ui="nova"][data-theme="daylight"] .acard{box-shadow:0 10px 24px rgba(17,19,24,.07)}
+html[data-ui="nova"][data-theme="daylight"] .tabbar{box-shadow:0 12px 28px rgba(17,19,24,.12)}
+
+html[data-type="large"]{font-size:18px}
+html[data-type="large"] .hero .big{font-size:62px}
+html[data-type="large"] .pricebig{font-size:52px}
+html[data-type="large"] .row .t{font-size:18px}
+html[data-type="large"] .row .s{font-size:14px}
+html[data-type="large"] .sh h2{font-size:20px}
+html[data-type="large"] .tile .vv{font-size:22px}
+html[data-type="large"] .tab{font-size:11px}
+html[data-type="large"] .acard .stat{font-size:40px}
+
+html[data-density="compact"]{--g:12px;--s1:6px;--s2:12px;--s3:16px}
+html[data-density="compact"] .row{min-height:52px;padding:8px 12px}
+html[data-density="compact"] .sh{padding-top:16px;padding-bottom:6px}
+html[data-density="compact"] .hero{padding-top:14px;padding-bottom:12px}
+html[data-density="compact"] .hero .big{font-size:48px}
+html[data-density="compact"] .pricebig{font-size:40px}
+html[data-density="compact"] .acard{padding:16px}
+html[data-density="compact"] .acard .stat{font-size:32px}
+html[data-density="compact"] .tiles{gap:6px}
+html[data-density="compact"] .tile{padding:10px 12px}
+
+html[data-radius="sharp"]{--r:8px}
+html[data-radius="sharp"] .hero,
+html[data-radius="sharp"] .tabbar,
+html[data-radius="sharp"] .cta,
+html[data-radius="sharp"] .ctabar .cta,
+html[data-radius="sharp"] .pill,
+html[data-radius="sharp"] .search input,
+html[data-radius="sharp"] .swatch,
+html[data-radius="sharp"] .tfs,
+html[data-radius="sharp"] .zoomctl,
+html[data-radius="sharp"] .seg,
+html[data-radius="sharp"] .chip,
+html[data-radius="sharp"] .cpill,
+html[data-radius="sharp"] .achip,
+html[data-radius="sharp"] .ranges button,
+html[data-radius="sharp"] .tile svg,
+html[data-radius="sharp"] .tabind::before,
+html[data-radius="sharp"] .list,
+html[data-radius="sharp"] .card,
+html[data-radius="sharp"] .agentfull,
+html[data-radius="sharp"] .tile,
+html[data-radius="sharp"] .chg,
+html[data-radius="sharp"] .chartcard,
+html[data-radius="sharp"] .acard,
+html[data-radius="sharp"] .iconbtn,
+html[data-radius="sharp"] .avatar,
+html[data-radius="sharp"] .toast{border-radius:8px}
+
+html[data-fx="calm"] .glow{text-shadow:none}
+html[data-fx="calm"] .hero,
+html[data-fx="calm"] .list,
+html[data-fx="calm"] .card,
+html[data-fx="calm"] .acard,
+html[data-fx="calm"] .agentfull,
+html[data-fx="calm"] .chartcard,
+html[data-fx="calm"] .tile,
+html[data-fx="calm"] .chg,
+html[data-fx="calm"] .tabbar,
+html[data-fx="calm"] .cta,
+html[data-fx="calm"] .ctabar .cta{box-shadow:none}
+html[data-fx="calm"] i.live.running{animation:none;box-shadow:none}
+html[data-fx="calm"] .breath{animation:none;opacity:.45}
+html[data-fx="calm"] .tabind::before{box-shadow:none}
+html[data-fx="calm"] .tick.up,html[data-fx="calm"] .tick.down{animation:none}

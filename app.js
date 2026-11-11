@@ -70,7 +70,22 @@
       sep: "rgba(17,19,24,.10)", card: "rgba(255,255,255,.90)", card2: "rgba(17,19,24,.08)",
       green: "#007a4d", red: "#d0163c", orange: "#c47a00", cyan: "#007a9c", blue: "#0b5fff", yellow: "#b88600", pink: "#c43a7a",
       accent: "#007a4d", wash: "rgba(0,122,77,.12)", wash2: "rgba(11,95,255,.06)", hair: "rgba(17,19,24,.10)",
-      ctaText: "#ffffff", tabbar: "rgba(255,255,255,.82)", themeColor: "#eef0f4" }
+      ctaText: "#ffffff", tabbar: "rgba(255,255,255,.82)", themeColor: "#eef0f4" },
+    graphite: { label: "Graphite", bg: "#0c0e11", text: "#eef0f3", sec: "rgba(238,240,243,.62)", ter: "rgba(238,240,243,.34)",
+      sep: "rgba(197,201,208,.10)", card: "rgba(28,32,38,.88)", card2: "rgba(197,201,208,.10)",
+      green: "#3ee0a0", red: "#ff5c7a", orange: "#ffb02e", cyan: "#8ec8ff", blue: "#7aa2ff", yellow: "#ffd84d", pink: "#ff7ab6",
+      accent: "#c5c9d0", wash: "rgba(197,201,208,.10)", wash2: "rgba(62,224,160,.06)", hair: "rgba(197,201,208,.12)",
+      ctaText: "#0c0e11", tabbar: "rgba(12,14,17,.80)", themeColor: "#0c0e11" },
+    forest: { label: "Forest", bg: "#07110c", text: "#e8f6ee", sec: "rgba(232,246,238,.62)", ter: "rgba(232,246,238,.34)",
+      sep: "rgba(143,219,110,.10)", card: "rgba(14,32,22,.86)", card2: "rgba(143,219,110,.10)",
+      green: "#3ee08c", red: "#ff6b7d", orange: "#ffb02e", cyan: "#7ad4c0", blue: "#5aa88a", yellow: "#ffd84d", pink: "#ff8aa0",
+      accent: "#8fdb6e", wash: "rgba(143,219,110,.14)", wash2: "rgba(62,224,140,.06)", hair: "rgba(143,219,110,.14)",
+      ctaText: "#061208", tabbar: "rgba(7,17,12,.80)", themeColor: "#07110c" },
+    rose: { label: "Rose", bg: "#14080c", text: "#fdeef2", sec: "rgba(253,238,242,.62)", ter: "rgba(253,238,242,.34)",
+      sep: "rgba(255,122,162,.10)", card: "rgba(36,16,22,.86)", card2: "rgba(255,122,162,.10)",
+      green: "#3dd68c", red: "#ff4d6d", orange: "#ffb02e", cyan: "#ffb3c8", blue: "#ff8aa8", yellow: "#ffd84d", pink: "#ff7aa2",
+      accent: "#ff7aa2", wash: "rgba(255,122,162,.14)", wash2: "rgba(61,214,140,.06)", hair: "rgba(255,122,162,.14)",
+      ctaText: "#1a0408", tabbar: "rgba(20,8,12,.80)", themeColor: "#14080c" }
   };
   const CANDLES = {
     classic: { label: "Green / red", up: null, down: null },
@@ -80,8 +95,15 @@
     blue:    { label: "Blue / pink", up: "#4c9dff", down: "#ff7ab6" },
     mono:    { label: "Solid / red", up: "text", down: "#ff5c7a" }
   };
+  const pref = (key, allowed, fallback) => { try { const v = localStorage.getItem(key); return allowed.includes(v) ? v : fallback; } catch (e) { return fallback; } };
   const themeId = () => { try { return THEMES[localStorage.getItem("desk.theme")] ? localStorage.getItem("desk.theme") : "midnight"; } catch (e) { return "midnight"; } };
   const candleId = () => { try { return CANDLES[localStorage.getItem("desk.candles")] ? localStorage.getItem("desk.candles") : "classic"; } catch (e) { return "classic"; } };
+  const uiId = () => pref("desk.ui", ["nova", "classic"], "nova");
+  const typeId = () => pref("desk.type", ["default", "large"], "default");
+  const densId = () => pref("desk.density", ["comfortable", "compact"], "comfortable");
+  const fxId = () => pref("desk.fx", ["full", "calm"], "full");
+  const radId = () => pref("desk.radius", ["soft", "sharp"], "soft");
+  const volOn = () => { try { return localStorage.getItem("desk.vol") !== "0"; } catch (e) { return true; } };
   function candlePair(th) {
     const id = candleId(), t = th || THEMES[themeId()] || THEMES.midnight, c = CANDLES[id] || CANDLES.classic;
     const up = c.up == null ? t.green : c.up === "text" ? t.text : c.up;
@@ -92,6 +114,12 @@
     const id = themeId(), t = THEMES[id] || THEMES.midnight, c = candlePair(t);
     const r = document.documentElement;
     r.setAttribute("data-theme", id);
+    r.setAttribute("data-ui", uiId());
+    r.setAttribute("data-type", typeId());
+    r.setAttribute("data-density", densId());
+    r.setAttribute("data-fx", fxId());
+    r.setAttribute("data-radius", radId());
+    r.setAttribute("data-vol", volOn() ? "on" : "off");
     const set = (k, v) => r.style.setProperty(k, v);
     ["bg","text","sec","ter","sep","card","card2","green","red","orange","cyan","blue","yellow","pink","accent","wash","wash2","hair"].forEach(k => set("--" + (k === "ctaText" ? "cta-text" : k), t[k]));
     set("--cta-text", t.ctaText); set("--tabbar", t.tabbar);
@@ -108,6 +136,13 @@
   }
   function setTheme(id) { try { localStorage.setItem("desk.theme", THEMES[id] ? id : "midnight"); } catch (e) {} applyAppearance(); const cvs = document.getElementById("candles"); if (cvs) cvs._lastC = null; render(); }
   function setCandles(id) { try { localStorage.setItem("desk.candles", CANDLES[id] ? id : "classic"); } catch (e) {} applyAppearance(); const cvs = document.getElementById("candles"); if (cvs) cvs._lastC = null; render(); }
+  function setPref(key, val, allowed) {
+    if (!allowed.includes(val)) return;
+    try { localStorage.setItem(key, val); } catch (e) {}
+    applyAppearance();
+    const cvs = document.getElementById("candles"); if (cvs) cvs._lastC = null;
+    render();
+  }
   function saveSlot(cv) {
     if (!cv || !cv._st) return;
     S.chartSlot = cv._st.slot;
@@ -853,7 +888,8 @@
       const lastC = DeskChart.candles(cv, list, x ? sc(x.risk_trailing_stop) : null,
                         { loading: !!c.pool && (!g || g.loading), step, min: 1, fmt: mcOn ? kfmt : undefined,
                           entryLine: p && p.entryPrice != null ? sc(p.entryPrice) : null,
-                          emptyText: mcOn && k == null ? "Market cap n/a" : undefined });
+                          emptyText: mcOn && k == null ? "Market cap n/a" : undefined,
+                          volume: volOn() });
       const flipMc = e => { e.preventDefault(); applyMcMode(!mcMode()); };
       const tg = document.getElementById("mctog");
       if (tg) tg.onclick = flipMc;
@@ -898,6 +934,51 @@
       </div>
       <div class="grp">App</div>
       <div class="list">
+        <div class="setrow" id="uipref">
+          <div class="sl"><span>Layout</span></div>
+          <div class="s wrap">New design is on. Switch to Current look anytime to go back to the previous one.</div>
+          <div class="seg wide" id="uiseg" role="group" aria-label="Layout">
+            <button type="button" data-ui="nova" class="${uiId() === "nova" ? "on" : ""}" aria-pressed="${uiId() === "nova"}">New design</button>
+            <button type="button" data-ui="classic" class="${uiId() === "classic" ? "on" : ""}" aria-pressed="${uiId() === "classic"}">Current look</button>
+          </div>
+        </div>
+        <div class="setrow" id="typepref">
+          <div class="sl"><span>Text size</span></div>
+          <div class="seg wide" id="typeseg" role="group" aria-label="Text size">
+            <button type="button" data-type="default" class="${typeId() === "default" ? "on" : ""}" aria-pressed="${typeId() === "default"}">Default</button>
+            <button type="button" data-type="large" class="${typeId() === "large" ? "on" : ""}" aria-pressed="${typeId() === "large"}">Large</button>
+          </div>
+        </div>
+        <div class="setrow" id="denspref">
+          <div class="sl"><span>Spacing</span></div>
+          <div class="seg wide" id="densseg" role="group" aria-label="Spacing">
+            <button type="button" data-density="comfortable" class="${densId() === "comfortable" ? "on" : ""}" aria-pressed="${densId() === "comfortable"}">Comfortable</button>
+            <button type="button" data-density="compact" class="${densId() === "compact" ? "on" : ""}" aria-pressed="${densId() === "compact"}">Compact</button>
+          </div>
+        </div>
+        <div class="setrow" id="radpref">
+          <div class="sl"><span>Corners</span></div>
+          <div class="seg wide" id="radseg" role="group" aria-label="Corners">
+            <button type="button" data-radius="soft" class="${radId() === "soft" ? "on" : ""}" aria-pressed="${radId() === "soft"}">Soft</button>
+            <button type="button" data-radius="sharp" class="${radId() === "sharp" ? "on" : ""}" aria-pressed="${radId() === "sharp"}">Sharp</button>
+          </div>
+        </div>
+        <div class="setrow" id="fxpref">
+          <div class="sl"><span>Effects</span></div>
+          <div class="s wrap">Calm turns off glows, shadows, and pulsing status dots.</div>
+          <div class="seg wide" id="fxseg" role="group" aria-label="Effects">
+            <button type="button" data-fx="full" class="${fxId() === "full" ? "on" : ""}" aria-pressed="${fxId() === "full"}">Full</button>
+            <button type="button" data-fx="calm" class="${fxId() === "calm" ? "on" : ""}" aria-pressed="${fxId() === "calm"}">Calm</button>
+          </div>
+        </div>
+        <div class="setrow" id="volpref">
+          <div class="sl"><span>Chart volume</span></div>
+          <div class="s wrap">Volume bars under the candlesticks. Off gives the price more room.</div>
+          <div class="seg wide" id="volseg" role="group" aria-label="Chart volume">
+            <button type="button" data-vol="1" class="${volOn() ? "on" : ""}" aria-pressed="${volOn()}">On</button>
+            <button type="button" data-vol="0" class="${volOn() ? "" : "on"}" aria-pressed="${!volOn()}">Off</button>
+          </div>
+        </div>
         <div class="setrow" id="mcpref">
           <div class="sl"><span>Price readouts</span></div>
           <div class="s wrap">Token price or implied market cap, on the coin price, chart, entry, and stop. You can also tap the price or the Market cap tile.</div>
@@ -932,6 +1013,12 @@
       ${groups}`;
     return { html: html.replace('class="row-in"', 'style="display:flex;flex:1;align-items:center;gap:12px"'), after() {
       document.querySelectorAll("#mcseg [data-mc]").forEach(b => b.onclick = e => { e.preventDefault(); applyMcMode(b.dataset.mc === "1"); });
+      document.querySelectorAll("#uiseg [data-ui]").forEach(b => b.onclick = e => { e.preventDefault(); setPref("desk.ui", b.dataset.ui, ["nova", "classic"]); });
+      document.querySelectorAll("#typeseg [data-type]").forEach(b => b.onclick = e => { e.preventDefault(); setPref("desk.type", b.dataset.type, ["default", "large"]); });
+      document.querySelectorAll("#densseg [data-density]").forEach(b => b.onclick = e => { e.preventDefault(); setPref("desk.density", b.dataset.density, ["comfortable", "compact"]); });
+      document.querySelectorAll("#radseg [data-radius]").forEach(b => b.onclick = e => { e.preventDefault(); setPref("desk.radius", b.dataset.radius, ["soft", "sharp"]); });
+      document.querySelectorAll("#fxseg [data-fx]").forEach(b => b.onclick = e => { e.preventDefault(); setPref("desk.fx", b.dataset.fx, ["full", "calm"]); });
+      document.querySelectorAll("#volseg [data-vol]").forEach(b => b.onclick = e => { e.preventDefault(); setPref("desk.vol", b.dataset.vol, ["1", "0"]); });
       document.querySelectorAll("#themes [data-theme]").forEach(b => b.onclick = e => { e.preventDefault(); setTheme(b.dataset.theme); });
       document.querySelectorAll("#candlesel [data-candle]").forEach(b => b.onclick = e => { e.preventDefault(); setCandles(b.dataset.candle); });
       const inv = document.getElementById("invite");
@@ -994,7 +1081,7 @@
   });
   let rz; window.addEventListener("resize", () => { clearTimeout(rz); rz = setTimeout(render, 150); });
 
-  if ("serviceWorker" in navigator && !LOCAL) navigator.serviceWorker.register("sw.js?v=16", { updateViaCache: "none" }).catch(() => {});
+  if ("serviceWorker" in navigator && !LOCAL) navigator.serviceWorker.register("sw.js?v=17", { updateViaCache: "none" }).catch(() => {});
   render();
   if (BASE) poll();
   window.desk = { S, render };

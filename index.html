@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="en">
+<html lang="en" data-ui="nova">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
@@ -12,8 +12,8 @@
 <link rel="manifest" id="mf" href="manifest.json">
 <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
 <link rel="icon" href="icons/icon-192.png">
-<script>try{var t=localStorage.getItem("desk.theme");if(t)document.documentElement.setAttribute("data-theme",t)}catch(e){}</script>
-<link rel="stylesheet" href="app.css?v=16">
+<script>try{var d=document.documentElement,g=function(k){return localStorage.getItem(k)};var t=g("desk.theme");if(t)d.setAttribute("data-theme",t);d.setAttribute("data-ui",g("desk.ui")==="classic"?"classic":"nova");var typ=g("desk.type");if(typ)d.setAttribute("data-type",typ);var den=g("desk.density");if(den)d.setAttribute("data-density",den);var fx=g("desk.fx");if(fx)d.setAttribute("data-fx",fx);var rad=g("desk.radius");if(rad)d.setAttribute("data-radius",rad)}catch(e){}</script>
+<link rel="stylesheet" href="app.css?v=17">
 </head>
 <body>
 <div id="offline" class="offline" hidden></div>
@@ -25,7 +25,7 @@
   <a href="#/account" data-tab="account" class="tab"><svg viewBox="0 0 24 24"><circle cx="12" cy="8" r="4"/><path d="M4 21c0-4.4 3.6-8 8-8s8 3.6 8 8"/></svg><span>Account</span></a>
 </nav>
 <div id="toast" class="toast" hidden></div>
-<script src="chart.js?v=16"></script>
-<script src="app.js?v=16"></script>
+<script src="chart.js?v=17"></script>
+<script src="app.js?v=17"></script>
 </body>
 </html>

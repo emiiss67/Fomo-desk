@@ -226,7 +226,8 @@
     }
     const all = fillGaps(real, opts.step);
     const slot = st.slot;
-    const AX = 64, plotW = w - AX, top = 10, priceBot = Math.round(h * 0.70), volTop = Math.round(h * 0.75), volBot = h - 22;
+    const showVol = opts.volume !== false;
+    const AX = 64, plotW = w - AX, top = 10, priceBot = Math.round(h * (showVol ? 0.70 : 0.86)), volTop = Math.round(h * 0.75), volBot = h - 22;
     const fit = Math.max(1, Math.floor(plotW / slot));
     st.off = Math.max(0, Math.min(st.off, Math.max(0, all.length - fit)));
     const end = all.length - Math.round(st.off), cs = all.slice(Math.max(0, end - fit), end);
@@ -247,9 +248,9 @@
       ctx.strokeStyle = C.sep; ctx.lineWidth = 1; ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(plotW, y); ctx.stroke();
       ctx.fillStyle = C.ter; ctx.fillText(F(v), plotW + 6, y);
     });
-    const vmax = Math.max(0, ...cs.map(c => c.gap ? 0 : (c.vol > 0 ? c.vol : 0)));
+    const vmax = showVol ? Math.max(0, ...cs.map(c => c.gap ? 0 : (c.vol > 0 ? c.vol : 0))) : 0;
     cs.forEach((c, i) => {
-      if (c.gap || !(vmax > 0 && c.vol > 0)) return;
+      if (!showVol || c.gap || !(vmax > 0 && c.vol > 0)) return;
       const vh = Math.max(1, (volBot - volTop) * c.vol / vmax), x = X(i);
       ctx.fillStyle = rgba(c.c >= c.o ? C.up : C.down, 0.40); ctx.fillRect(Math.round(x - bw / 2), volBot - vh, bw, vh);
     });
