@@ -580,6 +580,7 @@
   const dash = v => v == null ? "—" : v;
   const mcMode = () => { try { return localStorage.getItem("desk.mcmode") === "1"; } catch (e) { return false; } };
   const setMcMode = on => { try { localStorage.setItem("desk.mcmode", on ? "1" : "0"); } catch (e) { /* private mode */ } };
+  const applyMcMode = on => { setMcMode(!!on); const cvs = document.getElementById("candles"); if (cvs) cvs._lastC = null; render(); };
 
   // header price: the newest real price we have (GeckoTerminal's last candle close if it is newer than the desk sample)
   function livePrice(mint, c) {
@@ -612,7 +613,7 @@
     const tile = (ic, k, v) => `<div class="tile"><svg viewBox="0 0 24 24">${IC[ic]}</svg><div class="k">${k}</div><div class="vv">${v}</div></div>`;
     // Market cap toggle: price readouts switch to implied market cap = currentMC * (thatPrice / currentPrice), constant
     // supply. No current MC or price = n/a, never a made-up number. Saved in localStorage.
-    const mcOn = mcMode(), curMC = c.stats.marketCap, curP = c.price;
+    const mcOn = mcMode(), curMC = c.stats.marketCap, curP = livePrice(mint, c) ?? c.price;
     const fac = curMC != null && curP != null && curP > 0 && isFinite(curMC / curP) ? curMC / curP : null;
     const disp = v => !mcOn ? price(v) : v == null || fac == null ? "n/a" : kfmt(v * fac);
     const mcTile = `<button type="button" class="tile tog${mcOn ? " on" : ""}" id="mctog" aria-pressed="${mcOn}"><svg viewBox="0 0 24 24">${IC.mc}</svg>
@@ -625,8 +626,9 @@
         <div class="cname">${logo(c.name || mint, c.logo, 48)}<span class="cnm"><span>${esc(c.name || mint.slice(0, 4) + "…" + mint.slice(-3))}</span>
           <span class="sec sm">${esc(c.symbol || "")} · ${esc(c.chain)} · ${c.age_h == null ? "age —" : c.age_h < 1 ? Math.round(c.age_h * 60) + "m old" : Math.floor(c.age_h) + "h old"}</span></span>
           ${c.audit_chip ? `<a href="#/audit/${encodeURIComponent(mint)}" class="chip ${chipOk ? "ok" : "bad"}">🛡 ${esc(c.audit_chip)}</a>` : ""}</div>
-        <div class="pricerow"><span class="big pricebig glow">${mcOn ? tick("m" + mint, fac == null ? null : (livePrice(mint, c) == null ? null : livePrice(mint, c) * fac), v => v == null ? "n/a" : kfmt(v)) : tick("p" + mint, livePrice(mint, c), price)}</span>${mcOn ? `<span class="ter sm mclbl">MC</span>` : ""}
-          ${chg ? `<span class="cpill lg2 ${chg[0] >= 0 ? "up" : "down"}">${chg[0] >= 0 ? "▲" : "▼"} ${Math.abs(chg[0]).toFixed(chg[1] === "since entry" ? 2 : 1)}% <span class="ter">${chg[1]}</span></span>` : ""}</div>
+        <button type="button" class="pricerow" id="pricetog" aria-pressed="${mcOn}" aria-label="${mcOn ? "Show token price" : "Show market cap"}"><span class="big pricebig glow">${mcOn ? tick("m" + mint, fac == null ? null : (livePrice(mint, c) == null ? null : livePrice(mint, c) * fac), v => v == null ? "n/a" : kfmt(v)) : tick("p" + mint, livePrice(mint, c), price)}</span>${mcOn ? `<span class="ter sm mclbl">MC</span>` : ""}
+          ${chg ? `<span class="cpill lg2 ${chg[0] >= 0 ? "up" : "down"}">${chg[0] >= 0 ? "▲" : "▼"} ${Math.abs(chg[0]).toFixed(chg[1] === "since entry" ? 2 : 1)}% <span class="ter">${chg[1]}</span></span>` : ""}
+          <span class="mctip">${mcOn ? "tap to show price" : "tap to show market cap"}</span></button>
       </div>
       <div class="chartcard glass" id="chartcard"><div class="chsrc">${chartSrc(mint, c)}</div>
         <div class="chartwrap" style="position:relative"><canvas id="candles"></canvas><i id="breath" class="breath" hidden></i><div class="chshim"></div></div></div>
@@ -665,8 +667,11 @@
                         { loading: !!c.pool && (!g || g.loading), step, min: 1, fmt: mcOn ? kfmt : undefined,
                           entryLine: p && p.entryPrice != null ? sc(p.entryPrice) : null,
                           emptyText: mcOn && k == null ? "Market cap n/a" : undefined });
+      const flipMc = e => { e.preventDefault(); applyMcMode(!mcMode()); };
       const tg = document.getElementById("mctog");
-      if (tg) tg.onclick = e => { e.preventDefault(); setMcMode(!mcMode()); const cvs = document.getElementById("candles"); if (cvs) cvs._lastC = null; render(); };
+      if (tg) tg.onclick = flipMc;
+      const pg = document.getElementById("pricetog");
+      if (pg) pg.onclick = flipMc;
       if (cv) cv.addEventListener("pointerup", () => { S.chartOff[mint] = cv._st.off; });
       breathe(lastC);
       view.querySelectorAll("[data-tf]").forEach(b => b.onclick = e => { e.preventDefault(); if (S.tf[mint] === b.dataset.tf) return;
@@ -696,6 +701,17 @@
         <div class="row">${ext(a.profile_url, `<span class="main"><div class="t">Your FOMO profile</div><div class="s">@${esc(a.fomo_handle)}</div></span><span class="ter">›</span>`, "row-in")}</div>
         <button class="row" id="invite" style="width:100%;text-align:left"><span class="main"><div class="t">Invite a friend</div><div class="s">Share your FOMO invite link</div></span><span class="ter">›</span></button>
       </div>
+      <div class="grp">App</div>
+      <div class="list">
+        <div class="setrow" id="mcpref">
+          <div class="sl"><span>Price readouts</span></div>
+          <div class="s wrap">Token price or implied market cap, on the coin price, chart, entry, and stop. You can also tap the price or the Market cap tile.</div>
+          <div class="seg wide" id="mcseg" role="group" aria-label="Price readouts">
+            <button type="button" data-mc="0" class="${mcMode() ? "" : "on"}" aria-pressed="${!mcMode()}">Price</button>
+            <button type="button" data-mc="1" class="${mcMode() ? "on" : ""}" aria-pressed="${mcMode()}">Market cap</button>
+          </div>
+        </div>
+      </div>
       <div class="grp">Notifications</div>
       <div class="list">
         <div class="row"><span class="main"><div class="t">Telegram</div><div class="s">${a.telegram.connected ? "Connected · pushes come here" : "Not connected"}</div></span><span class="${a.telegram.connected ? "green" : "red"}">${a.telegram.connected ? "●" : "○"}</span></div>
@@ -705,6 +721,7 @@
       <div class="note">${esc(a.settings_note)}</div>
       ${groups}`;
     return { html: html.replace('class="row-in"', 'style="display:flex;flex:1;align-items:center;gap:12px"'), after() {
+      document.querySelectorAll("#mcseg [data-mc]").forEach(b => b.onclick = e => { e.preventDefault(); applyMcMode(b.dataset.mc === "1"); });
       const inv = document.getElementById("invite");
       if (inv) inv.onclick = async () => {
         const url = a.signup_url;
@@ -764,7 +781,7 @@
   });
   let rz; window.addEventListener("resize", () => { clearTimeout(rz); rz = setTimeout(render, 150); });
 
-  if ("serviceWorker" in navigator && !LOCAL) navigator.serviceWorker.register("sw.js").catch(() => {});
+  if ("serviceWorker" in navigator && !LOCAL) navigator.serviceWorker.register("sw.js?v=14", { updateViaCache: "none" }).catch(() => {});
   render();
   if (BASE) poll();
   window.desk = { S, render };
