@@ -95,23 +95,114 @@
     blue:    { label: "Blue / pink", up: "#4c9dff", down: "#ff7ab6" },
     mono:    { label: "Solid / red", up: "text", down: "#ff5c7a" }
   };
+  const UIS = {
+    nova: { label: "Nova", blurb: "The current design — a floating tab bar and rounded cards." },
+    classic: { label: "Classic", blurb: "The previous look, if you want to go back." },
+    terminal: { label: "Terminal", blurb: "A tighter trading desk — mono numbers and a flush tab bar." },
+    studio: { label: "Studio", blurb: "Airy and large, with a soft pill tab bar." },
+    pulse: { label: "Pulse", blurb: "Bolder accents and a stronger color wash." }
+  };
+  const UI_IDS = Object.keys(UIS);
+  const COLOR_KEYS = [
+    { key: "bg", label: "Background" },
+    { key: "text", label: "Text" },
+    { key: "card", label: "Cards" },
+    { key: "accent", label: "Accent" },
+    { key: "green", label: "Profit" },
+    { key: "red", label: "Loss" },
+    { key: "blue", label: "Links" },
+    { key: "orange", label: "Warning" }
+  ];
+  const CANDLE_COLOR_KEYS = [
+    { key: "up", label: "Candle up" },
+    { key: "down", label: "Candle down" }
+  ];
   const pref = (key, allowed, fallback) => { try { const v = localStorage.getItem(key); return allowed.includes(v) ? v : fallback; } catch (e) { return fallback; } };
   const themeId = () => { try { return THEMES[localStorage.getItem("desk.theme")] ? localStorage.getItem("desk.theme") : "midnight"; } catch (e) { return "midnight"; } };
-  const candleId = () => { try { return CANDLES[localStorage.getItem("desk.candles")] ? localStorage.getItem("desk.candles") : "classic"; } catch (e) { return "classic"; } };
-  const uiId = () => pref("desk.ui", ["nova", "classic"], "nova");
+  const candleId = () => { try { const v = localStorage.getItem("desk.candles"); if (v === "custom") return "custom"; return CANDLES[v] ? v : "classic"; } catch (e) { return "classic"; } };
+  const uiId = () => pref("desk.ui", UI_IDS, "nova");
   const typeId = () => pref("desk.type", ["default", "large"], "default");
   const densId = () => pref("desk.density", ["comfortable", "compact"], "comfortable");
   const fxId = () => pref("desk.fx", ["full", "calm"], "full");
   const radId = () => pref("desk.radius", ["soft", "sharp"], "soft");
+  const fontId = () => pref("desk.font", ["default", "rounded"], "default");
   const volOn = () => { try { return localStorage.getItem("desk.vol") !== "0"; } catch (e) { return true; } };
+  function parseHex(v) {
+    if (typeof v !== "string") return null;
+    const m = v.trim().match(/^#([0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/);
+    if (!m) return null;
+    let h = m[1];
+    if (h.length === 3) h = h[0] + h[0] + h[1] + h[1] + h[2] + h[2];
+    return "#" + h.toLowerCase();
+  }
+  function hexRgb(h) {
+    h = (parseHex(h) || "").slice(1);
+    if (h.length !== 6) return null;
+    return [parseInt(h.slice(0, 2), 16), parseInt(h.slice(2, 4), 16), parseInt(h.slice(4, 6), 16)];
+  }
+  function rgbaHex(h, a) {
+    const rgb = hexRgb(h);
+    return rgb ? "rgba(" + rgb[0] + "," + rgb[1] + "," + rgb[2] + "," + a + ")" : h;
+  }
+  function isLightHex(h) {
+    const rgb = hexRgb(h);
+    return rgb ? (rgb[0] * 299 + rgb[1] * 587 + rgb[2] * 114) / 1000 > 160 : false;
+  }
+  function onHex(h) { return isLightHex(h) ? "#111111" : "#ffffff"; }
+  function toInputHex(v, fallback) {
+    const h = parseHex(v);
+    if (h) return h;
+    const m = String(v || "").match(/^rgba?\((\d+)\s*,\s*(\d+)\s*,\s*(\d+)/i);
+    if (m) return "#" + [m[1], m[2], m[3]].map(n => ("0" + Number(n).toString(16)).slice(-2)).join("");
+    return parseHex(fallback) || "#000000";
+  }
+  function loadCustom() {
+    try {
+      const o = JSON.parse(localStorage.getItem("desk.custom") || "{}");
+      if (!o || typeof o !== "object") return {};
+      const out = {};
+      COLOR_KEYS.forEach(k => { const h = parseHex(o[k.key]); if (h) out[k.key] = h; });
+      return out;
+    } catch (e) { return {}; }
+  }
+  function loadCandleCustom() {
+    try {
+      const o = JSON.parse(localStorage.getItem("desk.candleCustom") || "{}");
+      return { up: parseHex(o && o.up), down: parseHex(o && o.down) };
+    } catch (e) { return { up: null, down: null }; }
+  }
+  function hasCustomColors() {
+    const c = loadCustom(), k = loadCandleCustom();
+    return Object.keys(c).length > 0 || !!(k.up || k.down);
+  }
+  function withCustom(t) {
+    const c = loadCustom();
+    const out = Object.assign({}, t, c);
+    if (c.text) { out.sec = rgbaHex(c.text, 0.62); out.ter = rgbaHex(c.text, 0.34); }
+    if (c.bg) {
+      const ink = isLightHex(c.bg) ? "#111111" : "#ffffff";
+      out.themeColor = c.bg;
+      out.tabbar = rgbaHex(c.bg, 0.80);
+      out.sep = rgbaHex(ink, 0.10);
+      out.hair = rgbaHex(ink, 0.10);
+    }
+    if (c.card) out.card2 = rgbaHex(c.text || t.text, isLightHex(out.bg) ? 0.08 : 0.10);
+    if (c.accent) out.wash = rgbaHex(c.accent, 0.14);
+    if (c.blue) out.wash2 = rgbaHex(c.blue, 0.08);
+    out.ctaText = onHex(out.accent);
+    out.ctaSellText = onHex(out.red);
+    out.ctaWarnText = onHex(out.orange);
+    return out;
+  }
   function candlePair(th) {
-    const id = candleId(), t = th || THEMES[themeId()] || THEMES.midnight, c = CANDLES[id] || CANDLES.classic;
-    const up = c.up == null ? t.green : c.up === "text" ? t.text : c.up;
-    const down = c.down == null ? t.red : c.down;
-    return { up, down };
+    const t = th || THEMES[themeId()] || THEMES.midnight;
+    const cc = loadCandleCustom();
+    if (candleId() === "custom") return { up: cc.up || t.green, down: cc.down || t.red };
+    const c = CANDLES[candleId()] || CANDLES.classic;
+    return { up: c.up == null ? t.green : c.up === "text" ? t.text : c.up, down: c.down == null ? t.red : c.down };
   }
   function applyAppearance() {
-    const id = themeId(), t = THEMES[id] || THEMES.midnight, c = candlePair(t);
+    const id = themeId(), t = withCustom(THEMES[id] || THEMES.midnight), c = candlePair(t);
     const r = document.documentElement;
     r.setAttribute("data-theme", id);
     r.setAttribute("data-ui", uiId());
@@ -120,22 +211,75 @@
     r.setAttribute("data-fx", fxId());
     r.setAttribute("data-radius", radId());
     r.setAttribute("data-vol", volOn() ? "on" : "off");
+    r.setAttribute("data-font", fontId());
     const set = (k, v) => r.style.setProperty(k, v);
-    ["bg","text","sec","ter","sep","card","card2","green","red","orange","cyan","blue","yellow","pink","accent","wash","wash2","hair"].forEach(k => set("--" + (k === "ctaText" ? "cta-text" : k), t[k]));
-    set("--cta-text", t.ctaText); set("--tabbar", t.tabbar);
-    set("--candle-up", c.up); set("--candle-down", c.down);
+    ["bg","text","sec","ter","sep","card","card2","green","red","orange","cyan","blue","yellow","pink","accent","wash","wash2","hair"].forEach(k => set("--" + k, t[k]));
+    set("--cta-text", t.ctaText);
+    set("--cta-sell-text", t.ctaSellText || onHex(t.red));
+    set("--cta-warn-text", t.ctaWarnText || onHex(t.orange));
+    set("--tabbar", t.tabbar);
+    set("--candle-up", c.up);
+    set("--candle-down", c.down);
+    if (fontId() === "rounded") {
+      const f = 'ui-rounded,"SF Pro Rounded","Hiragino Maru Gothic ProN","Arial Rounded MT Bold",sans-serif';
+      set("--textf", f); set("--display", f);
+    } else {
+      r.style.removeProperty("--textf");
+      r.style.removeProperty("--display");
+    }
     const meta = document.querySelector('meta[name="theme-color"]');
-    if (meta) meta.setAttribute("content", t.themeColor);
+    if (meta) meta.setAttribute("content", t.themeColor || t.bg);
     const sb = document.querySelector('meta[name="apple-mobile-web-app-status-bar-style"]');
-    if (sb) sb.setAttribute("content", id === "daylight" ? "default" : "black");
+    if (sb) sb.setAttribute("content", isLightHex(t.bg) ? "default" : "black");
     document.body && (document.body.style.backgroundColor = t.bg);
     try {
       const slot = parseFloat(localStorage.getItem("desk.slot"));
       if (slot >= 3 && slot <= 24) S.chartSlot = slot;
     } catch (e) {}
   }
+  function setCustom(key, hex, group) {
+    const h = parseHex(hex);
+    if (!h) return;
+    try {
+      if (group === "candle") {
+        const o = loadCandleCustom();
+        o[key] = h;
+        localStorage.setItem("desk.candleCustom", JSON.stringify({ up: o.up, down: o.down }));
+        localStorage.setItem("desk.candles", "custom");
+      } else {
+        const o = loadCustom();
+        o[key] = h;
+        localStorage.setItem("desk.custom", JSON.stringify(o));
+      }
+    } catch (e) {}
+    applyAppearance();
+    const cvs = document.getElementById("candles"); if (cvs) cvs._lastC = null;
+    const picker = document.querySelector('.picker input[data-ckey="' + key + '"][data-cgroup="' + (group || "ui") + '"]');
+    const row = picker && picker.closest(".picker");
+    if (row) {
+      const sw = row.querySelector(".sw"); if (sw) sw.style.background = h;
+      const col = row.querySelector('input[type=color]'); if (col && col.value !== h) col.value = h;
+      const hx = row.querySelector("input.phex"); if (hx && hx !== document.activeElement) hx.value = h;
+    }
+    const reset = document.getElementById("resetcolors");
+    if (reset) reset.hidden = false;
+    if (group === "candle") {
+      document.querySelectorAll("#candlesel [data-candle]").forEach(b => {
+        const on = b.dataset.candle === "custom";
+        b.classList.toggle("on", on);
+        b.setAttribute("aria-pressed", String(on));
+      });
+    }
+  }
+  function resetCustomColors() {
+    try { localStorage.removeItem("desk.custom"); localStorage.removeItem("desk.candleCustom"); } catch (e) {}
+    if (candleId() === "custom") { try { localStorage.setItem("desk.candles", "classic"); } catch (e) {} }
+    applyAppearance();
+    const cvs = document.getElementById("candles"); if (cvs) cvs._lastC = null;
+    render();
+  }
   function setTheme(id) { try { localStorage.setItem("desk.theme", THEMES[id] ? id : "midnight"); } catch (e) {} applyAppearance(); const cvs = document.getElementById("candles"); if (cvs) cvs._lastC = null; render(); }
-  function setCandles(id) { try { localStorage.setItem("desk.candles", CANDLES[id] ? id : "classic"); } catch (e) {} applyAppearance(); const cvs = document.getElementById("candles"); if (cvs) cvs._lastC = null; render(); }
+  function setCandles(id) { try { localStorage.setItem("desk.candles", (id === "custom" || CANDLES[id]) ? id : "classic"); } catch (e) {} applyAppearance(); const cvs = document.getElementById("candles"); if (cvs) cvs._lastC = null; render(); }
   function setPref(key, val, allowed) {
     if (!allowed.includes(val)) return;
     try { localStorage.setItem(key, val); } catch (e) {}
@@ -954,6 +1098,10 @@
     } };
   }
 
+  function pickerRow(key, label, value, group) {
+    const hex = toInputHex(value);
+    return `<label class="picker"><span class="sw" style="background:${hex}"><input type="color" data-ckey="${esc(key)}" data-cgroup="${esc(group || "ui")}" value="${hex}" aria-label="${esc(label)}"></span><span class="plab">${esc(label)}</span><input class="phex" type="text" value="${hex}" maxlength="7" spellcheck="false" autocapitalize="off" autocomplete="off" aria-label="${esc(label)} hex" data-ckey="${esc(key)}" data-cgroup="${esc(group || "ui")}"></label>`;
+  }
   function accountTab() {
     if (!S.state || !S.account) return navbar() + `<div class="sh"><h2>Account</h2></div><div class="gut">${sk(120, null, "border-radius:14px")}${sk(220, null, "border-radius:14px;margin-top:16px")}${sk(400, null, "border-radius:14px;margin-top:16px")}</div>`;
     const a = S.account;
@@ -979,11 +1127,9 @@
       <div class="list">
         <div class="setrow" id="uipref">
           <div class="sl"><span>Layout</span></div>
-          <div class="s wrap">New design is on. Switch to Current look anytime to go back to the previous one.</div>
-          <div class="seg wide" id="uiseg" role="group" aria-label="Layout">
-            <button type="button" data-ui="nova" class="${uiId() === "nova" ? "on" : ""}" aria-pressed="${uiId() === "nova"}">New design</button>
-            <button type="button" data-ui="classic" class="${uiId() === "classic" ? "on" : ""}" aria-pressed="${uiId() === "classic"}">Current look</button>
-          </div>
+          <div class="s wrap">${esc(UIS[uiId()].blurb)} Your colors below work on every look.</div>
+          <div class="dswatches" id="uiseg" role="group" aria-label="Layout">${UI_IDS.map(id =>
+            `<button type="button" class="dswatch${uiId() === id ? " on" : ""}" data-ui="${id}" aria-pressed="${uiId() === id}" aria-label="${esc(UIS[id].label)}"><i class="dprev ${id}"></i><span>${esc(UIS[id].label)}</span></button>`).join("")}</div>
         </div>
         <div class="setrow" id="typepref">
           <div class="sl"><span>Text size</span></div>
@@ -1004,6 +1150,13 @@
           <div class="seg wide" id="radseg" role="group" aria-label="Corners">
             <button type="button" data-radius="soft" class="${radId() === "soft" ? "on" : ""}" aria-pressed="${radId() === "soft"}">Soft</button>
             <button type="button" data-radius="sharp" class="${radId() === "sharp" ? "on" : ""}" aria-pressed="${radId() === "sharp"}">Sharp</button>
+          </div>
+        </div>
+        <div class="setrow" id="fontpref">
+          <div class="sl"><span>Font</span></div>
+          <div class="seg wide" id="fontseg" role="group" aria-label="Font">
+            <button type="button" data-font="default" class="${fontId() === "default" ? "on" : ""}" aria-pressed="${fontId() === "default"}">Default</button>
+            <button type="button" data-font="rounded" class="${fontId() === "rounded" ? "on" : ""}" aria-pressed="${fontId() === "rounded"}">Rounded</button>
           </div>
         </div>
         <div class="setrow" id="fxpref">
@@ -1032,22 +1185,35 @@
         </div>
         <div class="setrow" id="themepref">
           <div class="sl"><span>App colors</span></div>
-          <div class="s wrap">Background and accent for the whole app. Profit and loss stay green and red.</div>
+          <div class="s wrap">A starting palette for the whole app. Pick your own colors just below.</div>
           <div class="swatches" id="themes" role="group" aria-label="App colors">${Object.entries(THEMES).map(([id, th]) =>
             `<button type="button" class="swatch${themeId() === id ? " on" : ""}" data-theme="${id}" aria-pressed="${themeId() === id}" aria-label="${esc(th.label)}"><i class="swbg" style="background:${th.bg}"><b style="background:${th.accent}"></b></i><span>${esc(th.label)}</span></button>`).join("")}</div>
         </div>
+        <div class="setrow" id="custompref">
+          <div class="sl"><span>Your colors</span></div>
+          <div class="s wrap">Pick any color for the app, then the candles. These sit on top of the palette. Reset clears them.</div>
+          <div class="pickers" id="colorpick">${(() => {
+            const base = THEMES[themeId()] || THEMES.midnight, t = withCustom(base), c = candlePair(t);
+            return COLOR_KEYS.map(k => pickerRow(k.key, k.label, t[k.key], "ui")).join("") +
+              CANDLE_COLOR_KEYS.map(k => pickerRow(k.key, k.label, c[k.key], "candle")).join("");
+          })()}</div>
+          <button type="button" class="link" id="resetcolors"${hasCustomColors() ? "" : " hidden"}>Reset custom colors</button>
+        </div>
         <div class="setrow" id="candlepref">
           <div class="sl"><span>Candlestick colors</span></div>
-          <div class="s wrap">Up and down candles, and the volume bars under them, on the coin chart.</div>
+          <div class="s wrap">Presets, or Custom to use the candle colors you picked above.</div>
           <div class="swatches" id="candlesel" role="group" aria-label="Candlestick colors">${Object.entries(CANDLES).map(([id, ch]) => {
             const up = id === "classic" ? THEMES[themeId()].green : (ch.up === "text" ? THEMES[themeId()].text : ch.up);
             const down = id === "classic" ? THEMES[themeId()].red : ch.down;
             return `<button type="button" class="swatch${candleId() === id ? " on" : ""}" data-candle="${id}" aria-pressed="${candleId() === id}" aria-label="${esc(ch.label)}"><i class="csticks"><b style="background:${up}"></b><b style="background:${down}"></b></i><span>${esc(ch.label)}</span></button>`;
-          }).join("")}</div>
+          }).join("")}${(() => {
+            const c = candlePair(withCustom(THEMES[themeId()] || THEMES.midnight));
+            return `<button type="button" class="swatch${candleId() === "custom" ? " on" : ""}" data-candle="custom" aria-pressed="${candleId() === "custom"}" aria-label="Custom"><i class="csticks"><b style="background:${c.up}"></b><b style="background:${c.down}"></b></i><span>Custom</span></button>`;
+          })()}</div>
         </div>
         <div class="setrow" id="appver">
-          <div class="sl"><span>App version</span><span class="val">v19</span></div>
-          <div class="s wrap">If this isn’t v19, the phone is still on an old copy. Close the app from the app switcher and reopen it.</div>
+          <div class="sl"><span>App version</span><span class="val">v20</span></div>
+          <div class="s wrap">If this isn’t v20, the phone is still on an old copy. Close the app from the app switcher and reopen it.</div>
         </div>
       </div>
       <div class="grp">Notifications</div>
@@ -1060,14 +1226,36 @@
       ${groups}`;
     return { html: html.replace('class="row-in"', 'style="display:flex;flex:1;align-items:center;gap:12px"'), after() {
       document.querySelectorAll("#mcseg [data-mc]").forEach(b => b.onclick = e => { e.preventDefault(); applyMcMode(b.dataset.mc === "1"); });
-      document.querySelectorAll("#uiseg [data-ui]").forEach(b => b.onclick = e => { e.preventDefault(); setPref("desk.ui", b.dataset.ui, ["nova", "classic"]); });
+      document.querySelectorAll("#uiseg [data-ui]").forEach(b => b.onclick = e => { e.preventDefault(); setPref("desk.ui", b.dataset.ui, UI_IDS); });
       document.querySelectorAll("#typeseg [data-type]").forEach(b => b.onclick = e => { e.preventDefault(); setPref("desk.type", b.dataset.type, ["default", "large"]); });
       document.querySelectorAll("#densseg [data-density]").forEach(b => b.onclick = e => { e.preventDefault(); setPref("desk.density", b.dataset.density, ["comfortable", "compact"]); });
       document.querySelectorAll("#radseg [data-radius]").forEach(b => b.onclick = e => { e.preventDefault(); setPref("desk.radius", b.dataset.radius, ["soft", "sharp"]); });
+      document.querySelectorAll("#fontseg [data-font]").forEach(b => b.onclick = e => { e.preventDefault(); setPref("desk.font", b.dataset.font, ["default", "rounded"]); });
       document.querySelectorAll("#fxseg [data-fx]").forEach(b => b.onclick = e => { e.preventDefault(); setPref("desk.fx", b.dataset.fx, ["full", "calm"]); });
       document.querySelectorAll("#volseg [data-vol]").forEach(b => b.onclick = e => { e.preventDefault(); setPref("desk.vol", b.dataset.vol, ["1", "0"]); });
       document.querySelectorAll("#themes [data-theme]").forEach(b => b.onclick = e => { e.preventDefault(); setTheme(b.dataset.theme); });
       document.querySelectorAll("#candlesel [data-candle]").forEach(b => b.onclick = e => { e.preventDefault(); setCandles(b.dataset.candle); });
+      const onPick = ev => {
+        const el = ev.target, key = el.dataset.ckey, group = el.dataset.cgroup;
+        if (!key) return;
+        const h = parseHex(el.value);
+        if (!h) {
+          if (ev.type === "change" || ev.type === "blur") {
+            const base = withCustom(THEMES[themeId()] || THEMES.midnight);
+            const v = group === "candle" ? candlePair(base)[key] : base[key];
+            el.value = toInputHex(v);
+          }
+          return;
+        }
+        setCustom(key, h, group);
+      };
+      document.querySelectorAll("#colorpick input").forEach(el => {
+        el.addEventListener("input", onPick);
+        el.addEventListener("change", onPick);
+        if (el.classList.contains("phex")) el.addEventListener("blur", onPick);
+      });
+      const rst = document.getElementById("resetcolors");
+      if (rst) rst.onclick = ev => { ev.preventDefault(); resetCustomColors(); };
       const inv = document.getElementById("invite");
       if (inv) inv.onclick = async () => {
         const url = a.signup_url;
@@ -1131,7 +1319,7 @@
   if ("serviceWorker" in navigator && !LOCAL) {
     let swReload = false;
     navigator.serviceWorker.addEventListener("controllerchange", () => { if (swReload) return; swReload = true; location.reload(); });
-    navigator.serviceWorker.register("sw.js?v=19", { updateViaCache: "none" }).then(reg => { try { reg.update(); } catch (e) {} }).catch(() => {});
+    navigator.serviceWorker.register("sw.js?v=20", { updateViaCache: "none" }).then(reg => { try { reg.update(); } catch (e) {} }).catch(() => {});
   }
   render();
   if (BASE) poll();
