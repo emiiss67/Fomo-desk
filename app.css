@@ -348,3 +348,9 @@ button.pricerow{font:inherit;color:inherit;background:none;border:0;padding:0;wi
 .tile.tog.on .tgl{color:var(--green)}
 .tile.tog:active{transform:scale(.98)}
 .mclbl{margin-left:6px;align-self:flex-end}
+
+/* morning report */
+.rptsum .rptpnl{font-size:34px;font-weight:700;letter-spacing:-.8px;margin:2px 0 2px}
+.rptline{padding:10px 0;border-bottom:.5px solid var(--sep)}
+.rptline:last-child{border-bottom:0}
+.rptline .t{font-size:15px;font-weight:600}

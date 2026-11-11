@@ -35,7 +35,7 @@
   const BASE = FIXTURE ? "/" + FIXTURE.replace(/[^\w-]/g, "") + "/" : (DP ? SUPA + encodeURIComponent(DP) + "/" : null);
 
   const S = { tf: {}, chartOff: {}, state: null, chart: null, account: null, activity: [], coin: {}, audit: {}, decisions: {},
-              missing: {}, err: false, lastGood: null, next: 0, range: "LIVE", search: "", showSearch: false };
+              reports: null, report: {}, missing: {}, err: false, lastGood: null, next: 0, range: "LIVE", search: "", showSearch: false };
   const view = document.getElementById("view"), offline = document.getElementById("offline");
   let chartPrev = null, odoPrev = null, beam = {}, execAnim = null;
 
@@ -204,6 +204,8 @@
     const am = r.name === "audit" ? (r.arg || auditMint()) : null;
     if (am && (ch(`audit/${am}.json`) || !S.audit[am])) await getOpt(`audit/${am}.json`, S.audit, am);
     if (r.name === "agents") for (const a of AGENTS) if (ch(`decisions/${a}.json`) || !S.decisions[a]) await getOpt(`decisions/${a}.json`, S.decisions, a);
+    if (r.name === "report" && r.arg && /^\d{4}-\d{2}-\d{2}$/.test(r.arg) && (ch(`reports/${r.arg}.json`) || !S.report[r.arg]))
+      await getOpt(`reports/${r.arg}.json`, S.report, r.arg);
   }
   async function poll() {
     let changedSomething = false;
@@ -213,12 +215,16 @@
       const changed = first ? null : (st.seq !== S.state.seq ? (st.changed || []) : []);
       if (first || changed.length || st.seq !== S.state.seq) {
         const need = f => first || changed.includes(f);
-        const [chart, account, act] = await Promise.all([
+        const [chart, account, act, reps] = await Promise.all([
           need("chart.json") || !S.chart ? get("chart.json") : S.chart,
           need("account.json") || !S.account ? get("account.json") : S.account,
-          need("activity.json") || !S.activity.length ? get("activity.json") : S.activity[0]]);
+          need("activity.json") || !S.activity.length ? get("activity.json") : S.activity[0],
+          need("reports/index.json") || S.reports == null
+            ? get("reports/index.json").catch(e => { if (e.status) return S.reports || { reports: [] }; throw e; })
+            : S.reports]);
         S.chart = chart; S.account = account;
         if (S.activity[0] !== act) S.activity = [act];
+        S.reports = reps;
         S.state = st; changedSomething = true;
         checkEvents();
         await loadRoute(first ? null : changed);
@@ -378,6 +384,8 @@
       <div class="carousel">${st.agents.map(agentCard).join("")}</div>
       <div class="sh"><h2>New coins</h2><span class="ter sm">${(st.new_coins || []).length ? "live" : ""}${(st.new_coins || []).length ? '<i class="live running" style="margin-left:6px"></i>' : ""}</span></div>
       <div class="list glass">${(st.new_coins || []).length ? st.new_coins.slice(0, 8).map(newCoinRow).join("") : '<div class="empty">Listening for graduations</div>'}</div>
+      ${latestReports().length ? `<div class="sh"><h2>Morning report</h2><a href="#/activity">See all</a></div>
+      <div class="list glass">${reportRow(latestReports()[0])}</div>` : ""}
       <div class="sh"><h2>Activity</h2><a href="#/activity">See all</a></div>
       <div class="list glass">${rows.length ? rows.map(actRow).join("") : '<div class="empty">Nothing yet tonight</div>'}</div>`;
     return { html, after() {
@@ -451,13 +459,110 @@
     const rows = S.activity.flatMap(p => p.rows || []);
     const last = S.activity[S.activity.length - 1];
     if (rows.length) localStorage.setItem("desk.seen", rows[0].ts);
-    const html = navbar() + `<div class="sh"><h2>Activity</h2></div>
+    const reps = latestReports();
+    const html = navbar() + (reps.length ? `<div class="sh"><h2>Morning reports</h2></div><div class="list">${reps.map(reportRow).join("")}</div>` : "")
+      + `<div class="sh"><h2>Activity</h2></div>
       <div class="list">${rows.length ? rows.map(actRow).join("") : '<div class="empty">Nothing yet tonight</div>'}</div>
       ${last && last.next ? `<div class="gut" style="text-align:center"><button class="link" id="older">Load older</button></div>` : ""}`;
     return { html, after() {
       const b = document.getElementById("older");
       if (b) b.onclick = async () => { try { S.activity.push(await get(last.next)); render(); } catch (e) { toast("Couldn't load older rows"); } };
     } };
+  }
+
+  const moneyS = v => v == null ? "—" : (v >= 0 ? "+" : "-") + "$" + Math.abs(v).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  const nqty = v => v == null || !isFinite(Number(v)) ? "—" : String(Number(v));
+  function reportLabel(c) {
+    return (c && (c.name || c.symbol)) || (c && c.mint ? c.mint.slice(0, 4) + "…" + c.mint.slice(-4) : "—");
+  }
+  function reportDate(d) {
+    const m = String(d || "").match(/^(\d{4})-(\d{2})-(\d{2})$/);
+    if (!m) return d || "";
+    return Number(m[3]) + " " + ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"][Number(m[2]) - 1] + " " + m[1];
+  }
+  function latestReports() { return (S.reports && S.reports.reports) || []; }
+  function reportCoinLink(c) {
+    const name = reportLabel(c);
+    const page = c && c.mint ? `<a class="cl" href="${coinHref(c.mint)}">${esc(name)}</a>` : esc(name);
+    return page + (c && c.link ? ext(c.link, `<span class="ter"> FOMO ›</span>`, "") : "");
+  }
+  function reportRow(r) {
+    const pnl = r.pnl_usd, cls = pnl == null ? "ter" : pnl >= 0 ? "green" : "red";
+    const when = [r.from, r.to].filter(Boolean).join(" → ");
+    const trades = r.trades_closed == null ? "" : `${r.trades_closed} trade${r.trades_closed === 1 ? "" : "s"}`;
+    return `<a class="row" href="#/report/${esc(r.date)}"><span class="main"><div class="t">Morning report · ${esc(reportDate(r.date))}</div>
+      <div class="s">${esc([r.mode, when, trades].filter(Boolean).join(" · "))}</div></span>
+      <span class="v ${cls}">${moneyS(pnl)}</span></a>`;
+  }
+  function reportTrade(t) {
+    const pnl = t.pnl_usd, cls = pnl == null ? "ter" : pnl >= 0 ? "green" : "red";
+    const sym = t.native_symbol ? " " + t.native_symbol : "";
+    const io = (t.native_in != null || t.native_out != null) ? ` · ${nqty(t.native_in)} → ${nqty(t.native_out)}${esc(sym)}` : "";
+    const hold = t.hold ? " · HOLD" : "";
+    const rule = t.rule ? " · " + esc(t.rule) : (t.status && t.status !== "closed" ? " · " + esc(t.status) : "");
+    return `<div class="row"><span class="main"><div class="t">${reportCoinLink(t)}</div>
+      <div class="s wrap">${esc(t.chain || "solana")} · ${money(t.size_usd)} in${io}${rule}${hold}
+      · ${esc(t.opened || "")}–${esc(t.closed || "open")} · fees ${money(t.fees_usd)}</div></span>
+      <span class="v ${cls}">${pnl == null ? "open" : moneyS(pnl)}${t.pnl_pct == null ? "" : `<div class="s ${cls}">${sgn(t.pnl_pct, 1)}</div>`}</span></div>`;
+  }
+  function reportScreen(date) {
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(date || "")) return backbar("Activity", "#/activity") + `<div class="empty" style="padding-top:120px">No morning report for that day</div>`;
+    if (S.missing[`reports/${date}.json`]) return backbar("Activity", "#/activity") + `<div class="empty" style="padding-top:120px">No morning report for ${esc(reportDate(date))}</div>`;
+    const r = S.report[date];
+    if (!r) return backbar("Activity", "#/activity") + `<div class="sh"><h2>Morning report</h2></div><div class="gut">${sk(120, null, "border-radius:14px")}${sk(280, null, "border-radius:14px;margin-top:16px")}${sk(400, null, "border-radius:14px;margin-top:16px")}</div>`;
+    const pnl = r.pnl_usd, pcls = pnl == null ? "sec" : pnl >= 0 ? "green" : "red";
+    const up = r.uptime || {};
+    const down = (up.downtime || []).map(g => `${g.from}–${g.to} (${g.min} min)`).join(", ") || "none";
+    const fees = "Fees paid " + money(r.fees_paid_usd) + " on closed trades (already in P&L)"
+      + (r.fees_paid_open_entry_usd ? " + " + money(r.fees_paid_open_entry_usd) + " entry on open" : "");
+    const native = Object.entries(r.native_totals || {}).map(([sym, v]) => {
+      const miss = (v.in_missing ? ` (${v.in_missing} in n/a)` : "") + (v.out_missing ? ` (${v.out_missing} out n/a)` : "");
+      return `<div class="kv"><span>${esc(sym)} in → out</span><span>${nqty(v.in)} → ${nqty(v.out)} ${esc(sym)}${esc(miss)}</span></div>`;
+    }).join("");
+    const kv = (k, v) => `<div class="kv"><span>${k}</span><span>${v}</span></div>`;
+    const sc = r.scanner || {};
+    const by = sc.by_source ? Object.entries(sc.by_source).map(([k, v]) => `${k} ${v.passes} passed / ${v.kills} killed`).join(", ") : "";
+    const kills = Object.entries(sc.kills_by_reason || {}).map(([reason, g]) => {
+      const more = (g.count || 0) - ((g.coins || []).length);
+      const names = (g.coins || []).map(reportCoinLink).join(", ");
+      return `<div class="rptline"><div class="t">${esc(reason)} · ${g.count || 0}</div><div class="s wrap">${names}${more > 0 ? ` <span class="ter">… +${more} more</span>` : ""}</div></div>`;
+    }).join("") || `<div class="empty">No kills.</div>`;
+    const lines = (arr, fn, empty) => arr && arr.length ? arr.map(fn).join("") : `<div class="empty">${empty}</div>`;
+    const refLine = x => `<div class="row"><span class="main"><div class="t">${reportCoinLink(x)}</div>
+      <div class="s wrap">${esc([x.time, x.layer != null ? "layer " + x.layer + " " + (x.layer_name || "") : "", x.value || x.failed_rule || x.reason || ""].filter(Boolean).join(" · "))}${x.score != null ? " (score " + esc(x.score) + ")" : ""}</div></span></div>`;
+    const skipLine = x => `<div class="row"><span class="main"><div class="t">${reportCoinLink(x)}</div>
+      <div class="s wrap">pushed ${esc(x.pushed || "")} at ${price(x.signal_price)} · last ${price(x.last_price)} (${x.move_pct == null ? "—" : sgn(x.move_pct, 1)}) · high after ${price(x.high_after)}</div></span></div>`;
+    const jev = r.jev || {}, xc = r.x_cost || {};
+    const html = backbar("Activity", "#/activity") + `<div class="sh"><h2>Morning report · ${esc(reportDate(r.date))}</h2></div>
+      <div class="note">${esc(r.mode || "")} · ${esc((r.night && r.night.from) || "")} → ${esc((r.night && r.night.to) || "")} (${esc((r.night && r.night.tz) || "Europe/Vilnius")})</div>
+      ${r.layer8_down_kills ? `<div class="note red">Layer 8 was down: ${r.layer8_down_kills} coins went red on it.</div>` : ""}
+      <div class="card rptsum"><div class="rptpnl ${pcls}">${moneyS(pnl)}</div><div class="s">P&L${r.pnl_includes_fees ? " after fees" : ""}</div>
+        ${kv("Balance", `${money(r.balance_start)} → ${money(r.balance_end)}`)}
+        ${kv("Trades closed", r.trades_closed == null ? "—" : String(r.trades_closed))}
+        ${kv("Fees", fees)}
+        ${native}
+        ${kv("Coins seen", r.coins_seen == null ? "—" : String(r.coins_seen))}
+        ${kv("Uptime", (up.pct == null ? "—" : up.pct + "%") + (up.up_minutes != null ? ` (${up.up_minutes}/${up.total_minutes} min)` : ""))}
+        ${kv("Downtime", esc(down))}
+        ${kv("Full PAPER night", r.full_paper_night ? "yes" : "no" + (r.full_paper_night_why ? " · " + esc(r.full_paper_night_why) : ""))}
+      </div>
+      ${r.open_at_end && r.open_at_end.length ? `<div class="sh"><h2>Still open at report time</h2></div><div class="list">${r.open_at_end.map(t => `<div class="row"><span class="main"><div class="t">${reportCoinLink(t)}${t.hold ? ' <span class="pill paper">HOLD</span>' : ""}</div>
+        <div class="s wrap">${money(t.size_usd)} · ${nqty(t.native_in)} ${esc(t.native_symbol || "")} in · entry fee ${money(t.entry_fee_usd)} · entry ${price(t.entry_price)} · opened ${esc(t.opened || "")}</div></span></div>`).join("")}</div>` : ""}
+      <div class="sh"><h2>Red trades</h2></div><div class="list">${lines(r.red_trades, reportTrade, "None.")}</div>
+      <div class="sh"><h2>Green trades</h2></div><div class="list">${lines(r.green_trades, reportTrade, "None.")}</div>
+      <div class="sh"><h2>Scanner · ${sc.passes == null ? "—" : sc.passes} passed, ${sc.kills == null ? "—" : sc.kills} killed</h2></div>
+      ${by ? `<div class="note">${esc(by)}</div>` : ""}
+      <div class="card">${kills}</div>
+      <div class="sh"><h2>Auditor refusals</h2></div><div class="list">${lines(r.auditor_refusals, refLine, "None.")}</div>
+      <div class="sh"><h2>Analyst rejects</h2></div><div class="list">${lines(r.analyst_rejects, refLine, "None.")}</div>
+      ${r.executor_skips && r.executor_skips.length ? `<div class="sh"><h2>Executor skips</h2></div><div class="list">${r.executor_skips.map(refLine).join("")}</div>` : ""}
+      <div class="sh"><h2>Coins you skipped</h2></div><div class="list">${lines(r.skipped_by_you, skipLine, "None.")}</div>
+      <div class="sh"><h2>Jev</h2></div>
+      <div class="note">Mode ${esc(jev.analyst_mode || "—")} · tokens ${jev.input_tokens == null ? "—" : esc(jev.input_tokens)} · cost ${money(jev.cost_usd)}${jev.note ? " · " + esc(jev.note) : ""}</div>
+      <div class="sh"><h2>X buzz API</h2></div>
+      <div class="note">Coins ${xc.coins == null ? "—" : xc.coins} · counts ${xc.counts == null ? "—" : xc.counts} · posts ${xc.posts == null ? "—" : xc.posts} · cost ${money(xc.cost_usd)}</div>
+      ${r.signup_url ? `<div class="note">${ext(r.signup_url, "New to FOMO?", "link")}</div>` : ""}`;
+    return { html, after() {} };
   }
 
   function auditMint() { const a = card("auditor"); return a && a.current ? a.current.mint : null; }
@@ -749,12 +854,13 @@
   function render() {
     tickOffline();
     const r = route();
-    document.querySelectorAll(".tab").forEach(t => t.classList.toggle("on", t.dataset.tab === r.name || (r.name === "coin" || r.name === "audit") && t.dataset.tab === "home"));
+    document.querySelectorAll(".tab").forEach(t => t.classList.toggle("on", t.dataset.tab === r.name || ((r.name === "coin" || r.name === "audit") && t.dataset.tab === "home") || (r.name === "report" && t.dataset.tab === "activity")));
     const tabs = [...document.querySelectorAll(".tab")], on = tabs.findIndex(t => t.classList.contains("on")), ind = document.getElementById("tabind");
     if (ind && on >= 0) ind.style.transform = `translateX(${on * 100}%)`;
     if (!BASE) { if (!document.getElementById("gb")) { view.innerHTML = gate(); bindGate(); } document.getElementById("tabbar").hidden = true; return; }
     const out = r.name === "agents" ? agentsTab() : r.name === "activity" ? activityTab() : r.name === "account" ? accountTab()
-      : r.name === "coin" && r.arg ? coinScreen(decodeURIComponent(r.arg)) : r.name === "audit" ? auditScreen(r.arg && decodeURIComponent(r.arg)) : home();
+      : r.name === "coin" && r.arg ? coinScreen(decodeURIComponent(r.arg)) : r.name === "audit" ? auditScreen(r.arg && decodeURIComponent(r.arg))
+      : r.name === "report" && r.arg ? reportScreen(decodeURIComponent(r.arg)) : home();
     const o = typeof out === "string" ? { html: out } : out;
     const ae = document.activeElement && document.activeElement.id === "q";
     view.innerHTML = o.html;
@@ -781,7 +887,7 @@
   });
   let rz; window.addEventListener("resize", () => { clearTimeout(rz); rz = setTimeout(render, 150); });
 
-  if ("serviceWorker" in navigator && !LOCAL) navigator.serviceWorker.register("sw.js?v=14", { updateViaCache: "none" }).catch(() => {});
+  if ("serviceWorker" in navigator && !LOCAL) navigator.serviceWorker.register("sw.js?v=15", { updateViaCache: "none" }).catch(() => {});
   render();
   if (BASE) poll();
   window.desk = { S, render };
