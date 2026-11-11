@@ -35,7 +35,8 @@
   const BASE = FIXTURE ? "/" + FIXTURE.replace(/[^\w-]/g, "") + "/" : (DP ? SUPA + encodeURIComponent(DP) + "/" : null);
 
   const S = { tf: {}, chartOff: {}, chartSlot: 9, state: null, chart: null, account: null, activity: [], coin: {}, audit: {}, decisions: {},
-              reports: null, report: {}, missing: {}, err: false, lastGood: null, next: 0, range: "LIVE", search: "", showSearch: false };
+              reports: null, report: {}, missing: {}, err: false, lastGood: null, next: 0, range: "LIVE", search: "", showSearch: false,
+              tpDraft: {}, tpPart: {} };
   const view = document.getElementById("view"), offline = document.getElementById("offline");
   let chartPrev = null, odoPrev = null, beam = {}, execAnim = null;
 
@@ -339,6 +340,18 @@
   const safeUrl = u => { try { const x = new URL(u); return x.protocol === "https:" ? u : null; } catch (e) { return null; } };
   const ext = (u, inner, cls) => { const s = safeUrl(u); return s ? `<a class="${cls || ""}" href="${esc(s)}" target="_blank" rel="noopener">${inner}</a>` : inner; };
   const money = v => v == null ? "—" : (v < 0 ? "-" : "") + "$" + Math.abs(v).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  // 2026-11-11 half-manual desk: Sell / Take profit open the desk bot in Telegram with a /start payload.
+  // The app holds no key or token: the bot only obeys the owner's own chat, and a full sell needs a Confirm tap there.
+  const DESK_BOT = "https://t.me/Tradingaibotgrok_bot?start=";
+  const posId = id => Number.isInteger(id) && id > 0 ? id : null;
+  const tgLink = payload => /^[A-Za-z0-9_-]{1,64}$/.test(payload) ? DESK_BOT + payload : null;
+  const tpText = (pct, part) => pct == null ? null : "+" + (+pct).toLocaleString("en-US", { maximumFractionDigits: 2 }) + "% · sell " + (part === "half" ? "half" : "all");
+  function tpPayload(id, pct, part) {
+    const v = Math.round(+pct * 10) / 10;
+    if (!posId(id) || !isFinite(v) || v <= 0 || v > 100000) return null;
+    const whole = Math.trunc(v), dec = Math.round((v - whole) * 10);
+    return `tp_${id}_${whole}${dec ? "p" + dec : ""}_${part === "half" ? "half" : "all"}`;
+  }
   const moneyS = v => v == null ? "—" : (v >= 0 ? "+" : "-") + "$" + Math.abs(v).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
   const kfmt = v => v == null ? "—" : v >= 1e6 ? "$" + (v / 1e6).toFixed(2) + "M" : v >= 1e3 ? "$" + (v / 1e3).toFixed(1) + "K" : "$" + v.toFixed(0);
   // same subscript-zero format as the chart axis: 0.000000001458 -> "$0.0₈1458" (never "e-" notation)
@@ -775,7 +788,7 @@
     if (S.state && Array.isArray(S.state.open_positions)) {
       return S.state.open_positions.map(r => ({
         row: { mint: r.mint, title: "Bought " + (r.name || r.mint), logo: r.logo,
-               value: r.sizeUsd != null ? money(r.sizeUsd) : "", hold: !!r.hold },
+               value: r.sizeUsd != null ? money(r.sizeUsd) : "", hold: !!r.hold, tpPct: r.tpPct, tpPart: r.tpPart },
         coin: S.coin[r.mint]
       }));
     }
@@ -790,9 +803,40 @@
       : esc(r.value || r.subtitle || "");
     const pct = m && m.pct;
     const held = (p && p.hold) || r.hold;
+    const tpPct = r.tpPct != null ? r.tpPct : p && p.open ? p.tpPct : null, tpPart = r.tpPct != null ? r.tpPart : p && p.tpPart;
+    const tp = tpText(tpPct, tpPart);
     return `<a class="row" href="${coinHref(r.mint)}">${logo(name, r.logo || (c && c.logo), 40)}<span class="main"><div class="t">${esc(name)}${held ? ' <span class="pill paper">HOLD</span>' : ""}</div>
-      <div class="s">${sub}</div></span>
+      <div class="s">${sub}${tp ? ` · <span class="green">TP ${esc(tp)}</span>` : ""}</div></span>
       <span class="v">${pct == null ? '<span class="ter">—</span>' : `<span class="cpill ${pct >= 0 ? "up" : "down"}">${sgn(pct, 1)}</span>`}</span></a>`;
+  }
+  function manualBlock(p, mint) {
+    const id = posId(p.id);
+    if (!id) return `<div class="kv"><span class="sec">Take profit</span><span class="red">n/a</span></div>`;
+    const tp = tpText(p.tpPct, p.tpPart), live = p.mode === "LIVE";
+    const draft = S.tpDraft[mint] != null ? S.tpDraft[mint] : p.tpPct != null ? String(p.tpPct) : "";
+    const part = S.tpPart[mint] || p.tpPart || "all";
+    const sell = tgLink("sell_" + id), go = tgLink(tpPayload(id, draft, part) || ""), off = tgLink("tpoff_" + id);
+    return `<div class="kv"><span class="sec">Take profit</span><span class="${tp ? "green" : "ter"}">${tp ? esc(tp) : "off"}</span></div>
+      <div class="manual">
+        <div class="tprow"><label class="tpin"><span>+</span><input id="tpin" type="number" inputmode="decimal" min="0.1" max="100000" step="any" placeholder="50" value="${esc(draft)}" aria-label="Take profit percent"><span>%</span></label>
+          <div class="seg" id="tpseg" role="group" aria-label="Sell when it hits"><button type="button" data-part="all" class="${part === "all" ? "on" : ""}">All</button><button type="button" data-part="half" class="${part === "half" ? "on" : ""}">Half</button></div></div>
+        <div class="mbtns"><a class="mbtn${go ? "" : " off"}" id="tpgo" ${go ? `href="${esc(go)}"` : ""} target="_blank" rel="noopener">Set TP</a>
+          ${tp && off ? `<a class="mbtn ghost" href="${esc(off)}" target="_blank" rel="noopener">Clear TP</a>` : ""}
+          ${sell ? `<a class="mbtn sell" href="${esc(sell)}" target="_blank" rel="noopener">Sell now</a>` : ""}</div>
+        <div class="s wrap">Opens the desk bot in Telegram: tap Start (or Send). ${live ? "LIVE: Sell sends you the FOMO sell link, the desk never places orders." : "PAPER: Sell asks for a Confirm tap, then fills at the current price."} The desk's own exits stay on; whichever fires first wins.</div>
+      </div>`;
+  }
+  function bindManual(p, mint) {
+    const inp = document.getElementById("tpin"), seg = document.getElementById("tpseg"), go = document.getElementById("tpgo");
+    if (!inp || !go || !p) return;
+    const upd = () => {
+      const url = tgLink(tpPayload(p.id, S.tpDraft[mint] != null ? S.tpDraft[mint] : inp.value, S.tpPart[mint] || p.tpPart || "all") || "");
+      if (url) { go.href = url; go.classList.remove("off"); } else { go.removeAttribute("href"); go.classList.add("off"); }
+    };
+    inp.oninput = () => { S.tpDraft[mint] = inp.value; upd(); };
+    if (seg) seg.querySelectorAll("button").forEach(b => b.onclick = () => {
+      S.tpPart[mint] = b.dataset.part; seg.querySelectorAll("button").forEach(x => x.classList.toggle("on", x === b)); upd();
+    });
   }
   const STAGE = { watching: ["Watching", "cyan"], killed: ["Skipped", "ter"], passed: ["→ Auditor", "cyan"], auditing: ["Auditing", "cyan"],
                   rejected: ["Rejected", "red"], cleared: ["Cleared", "green"], holding: ["Holding", "green"], traded: ["Traded", "sec"] };
@@ -1141,6 +1185,7 @@
           ${p.hold ? `<div class="kv"><span class="sec">Hold</span><span>owner hold · no stop / trail / timeout (rug still exits)</span></div>` : ""}
           <div class="kv"><span class="sec">${esc(p.nativeSymbol || "SOL")} in</span><span>${nat(p.nativeIn)}</span></div>
           <div class="kv"><span class="sec">Entry fee</span><span>${p.entryFeeUsd == null ? "n/a" : money(p.entryFeeUsd)}</span></div>
+          ${p.open ? manualBlock(p, mint) : ""}
           ${p.open ? "" : `<div class="kv"><span class="sec">Exit${mcOn ? " MC" : ""} · ${esc(p.exitReason)}</span><span>${disp(p.exitPrice)}</span></div>
           <div class="kv"><span class="sec">${esc(p.nativeSymbol || "SOL")} out</span><span>${nat(p.nativeOut)}</span></div>
           <div class="kv"><span class="sec">Fees (in + out)</span><span>${p.feesUsd == null ? "n/a" : money(p.feesUsd)}</span></div>`}</div>` : ""}
@@ -1152,6 +1197,7 @@
       <div class="note mono">${esc(mint)}</div>
       <div class="spacer"></div>${safeUrl(c.link) ? `<div class="ctabar"><a class="cta ${p && p.open ? "sell" : ""}" href="${esc(c.link)}" target="_blank" rel="noopener">${esc(c.button)}</a></div>` : ""}`;
     return { html, after() {
+      bindManual(p, mint);
       gtWanted(mint, c.pool, c.age_h);
       const tf = tfFor(mint, c.age_h), step = TFS[tf][2], g = OHLC[mint + "|" + tf], gt = g && g.cs && g.cs.length ? g.cs : null;
       const cv = document.getElementById("candles");
@@ -1311,8 +1357,8 @@
           })()}</div>
         </div>
         <div class="setrow" id="appver">
-          <div class="sl"><span>App version</span><span class="val">v26</span></div>
-          <div class="s wrap">If this isn’t v26, the phone is still on an old copy. Close the app from the app switcher and reopen it.</div>
+          <div class="sl"><span>App version</span><span class="val">v27</span></div>
+          <div class="s wrap">If this isn’t v27, the phone is still on an old copy. Close the app from the app switcher and reopen it.</div>
         </div>
       </div>
       <div class="grp">Notifications</div>
@@ -1397,6 +1443,7 @@
   // ---------- render / routing ----------
   function render() {
     tickOffline();
+    if (document.activeElement && document.activeElement.id === "tpin" && route().name === "coin") return;  // typing a TP
     const r = route();
     document.querySelectorAll(".tab").forEach(t => t.classList.toggle("on", t.dataset.tab === r.name || ((r.name === "coin" || r.name === "audit") && t.dataset.tab === "home") || (r.name === "report" && t.dataset.tab === "activity")));
     const tabs = [...document.querySelectorAll(".tab")], on = tabs.findIndex(t => t.classList.contains("on")), ind = document.getElementById("tabind");

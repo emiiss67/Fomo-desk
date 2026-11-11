@@ -1069,3 +1069,16 @@ html[data-ui="blotter"] .tile .vv,html[data-ui="blotter"] .acard .stat{font-size
 html[data-ui="blotter"] .grp{font-size:10px;letter-spacing:.12em;text-transform:uppercase;padding-top:16px}
 html[data-ui="blotter"] .seg span.on,html[data-ui="blotter"] .seg button.on{background:transparent;color:var(--accent);box-shadow:inset 0 -2px 0 var(--accent);border-radius:0}
 html[data-ui="blotter"] .view{padding-top:calc(env(safe-area-inset-top) + 4px);padding-bottom:calc(var(--tab) + 16px)}
+
+/* v27 half-manual: Sell now + Take profit on the position card (open the desk bot in Telegram) */
+.manual{margin-top:8px;padding-top:10px;border-top:.5px solid var(--sep)}
+.manual .tprow{display:flex;gap:10px;align-items:center}
+.manual .tpin{flex:1;display:flex;align-items:center;gap:4px;background:var(--card2);border-radius:9px;padding:0 10px;height:36px;color:var(--sec);font-size:15px}
+.manual .tpin input{flex:1;min-width:0;width:100%;background:none;border:0;outline:0;color:var(--text);font:inherit;font-size:16px;font-variant-numeric:tabular-nums;-webkit-appearance:none;appearance:none}
+.manual .seg{width:120px}
+.manual .mbtns{display:flex;gap:8px;margin-top:10px}
+.manual .mbtn{flex:1;height:40px;border-radius:12px;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:15px;background:var(--green);color:var(--cta-text,#000);text-decoration:none;touch-action:manipulation}
+.manual .mbtn.sell{background:var(--red);color:var(--cta-sell-text,#fff)}
+.manual .mbtn.ghost{background:var(--card2);color:var(--text)}
+.manual .mbtn.off{opacity:.4;pointer-events:none}
+.manual .s.wrap{white-space:normal;color:var(--sec);font-size:13px;margin-top:8px;line-height:1.35}
