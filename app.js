@@ -51,6 +51,11 @@
       green: "#3ee0b0", red: "#ff6b7d", orange: "#ffb02e", cyan: "#5ad8ff", blue: "#4cc9ff", yellow: "#ffd84d", pink: "#ff7ab6",
       accent: "#5ad8ff", wash: "rgba(90,216,255,.14)", wash2: "rgba(62,224,176,.07)", hair: "rgba(160,210,230,.12)",
       ctaText: "#021018", tabbar: "rgba(6,20,28,.78)", themeColor: "#06141c" },
+    navy: { label: "Navy", bg: "#0a1328", text: "#e8eef8", sec: "rgba(220,230,245,.62)", ter: "rgba(220,230,245,.34)",
+      sep: "rgba(140,170,220,.12)", card: "rgba(16,28,54,.88)", card2: "rgba(122,168,255,.10)",
+      green: "#3ee0b0", red: "#ff6b7d", orange: "#ffb02e", cyan: "#7ec8ff", blue: "#7aa8ff", yellow: "#ffd84d", pink: "#ff7ab6",
+      accent: "#7aa8ff", wash: "rgba(122,168,255,.16)", wash2: "rgba(62,224,176,.07)", hair: "rgba(140,170,220,.14)",
+      ctaText: "#071018", tabbar: "rgba(10,19,40,.82)", themeColor: "#0a1328" },
     ember: { label: "Ember", bg: "#140c08", text: "#fbf3ea", sec: "rgba(251,243,234,.62)", ter: "rgba(251,243,234,.34)",
       sep: "rgba(255,200,140,.10)", card: "rgba(36,22,14,.84)", card2: "rgba(255,176,46,.10)",
       green: "#3dd68c", red: "#ff5c5c", orange: "#ffb02e", cyan: "#ffd19a", blue: "#ff9f4a", yellow: "#ffd84d", pink: "#ff8a6a",
@@ -1257,8 +1262,8 @@
           })()}</div>
         </div>
         <div class="setrow" id="appver">
-          <div class="sl"><span>App version</span><span class="val">v23</span></div>
-          <div class="s wrap">If this isn’t v23, the phone is still on an old copy. Close the app from the app switcher and reopen it.</div>
+          <div class="sl"><span>App version</span><span class="val">v24</span></div>
+          <div class="s wrap">If this isn’t v24, the phone is still on an old copy. Close the app from the app switcher and reopen it.</div>
         </div>
       </div>
       <div class="grp">Notifications</div>
