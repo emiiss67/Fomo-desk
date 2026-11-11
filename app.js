@@ -473,6 +473,48 @@
       <div class="carousel" style="margin-top:12px"><div class="acard sk"></div></div>
       <div class="gut" style="margin-top:28px">${sk(300)}</div>`;
   }
+
+  function logoFor(mint) {
+    if (!mint) return null;
+    const c = S.coin[mint];
+    if (c && c.logo) return c.logo;
+    for (const page of S.activity || []) {
+      for (const r of page.rows || []) if (r.mint === mint && r.logo) return r.logo;
+    }
+    for (const n of (S.state && S.state.new_coins) || []) if (n.mint === mint && n.logo) return n.logo;
+    return null;
+  }
+  function markName(m) {
+    const c = m.mint && S.coin[m.mint];
+    if (c && c.name) return c.name;
+    if (m.kind === "bought" && m.text) return String(m.text).replace(/^Bought /, "");
+    for (const page of S.activity || []) {
+      for (const r of page.rows || []) {
+        if (r.mint === m.mint && r.title) return String(r.title).replace(/^(Bought|Sold|Stopped|Rejected) /, "");
+      }
+    }
+    return m.mint ? String(m.mint).slice(0, 2) : "?";
+  }
+  function enrichMarks(list) {
+    return (list || []).map(m => {
+      const kind = m.kind || (/^Bought /i.test(m.text || "") ? "bought" : (m.color === "red" ? "stopped" : "sold"));
+      const label = kind === "bought" ? "Buy" : (m.text || (kind === "stopped" ? "Stop" : "Sell"));
+      return { ...m, kind, label, name: markName({ ...m, kind }), logo: logoFor(m.mint) };
+    });
+  }
+  function paintChartMarks(canvas, items) {
+    const wrap = canvas && canvas.parentNode;
+    if (!wrap) return;
+    let layer = wrap.querySelector(".chartmarks");
+    if (!layer) { layer = document.createElement("div"); layer.className = "chartmarks"; wrap.appendChild(layer); }
+    layer.innerHTML = (items || []).map(it => {
+      const href = it.mint ? coinHref(it.mint) : "#";
+      const title = it.text || it.label || "";
+      const col = it.color || (it.kind === "bought" ? "blue" : it.kind === "stopped" ? "red" : "green");
+      return `<a class="cmark ${esc(col)}" href="${href}" style="left:${it.x}px;top:${it.y}px;width:${it.w}px" title="${esc(title)}" aria-label="${esc(title)}">${logo(it.name, it.logo, 16)}<span>${esc(it.label)}</span></a>`;
+    }).join("");
+  }
+
   function home() {
     if (!S.state) return loadingHome();
     const st = S.state, bal = st.balance;
@@ -501,7 +543,8 @@
       <div class="list glass">${rows.length ? rows.map(actRow).join("") : '<div class="empty">Nothing yet tonight</div>'}</div>`;
     return { html, after() {
       if (odo.roll) runOdometer();
-      chartPrev = DeskChart.line(document.getElementById("line"), { points: rng.points, marks: rng.marks, start: S.chart && S.chart.start_value }, chartPrev);
+      const line = document.getElementById("line");
+      chartPrev = DeskChart.line(line, { points: rng.points, marks: enrichMarks(rng.marks), start: S.chart && S.chart.start_value, onMarks: items => paintChartMarks(line, items) }, chartPrev);
       afterCards();
     } };
   }
@@ -1003,8 +1046,8 @@
           }).join("")}</div>
         </div>
         <div class="setrow" id="appver">
-          <div class="sl"><span>App version</span><span class="val">v18</span></div>
-          <div class="s wrap">If this isn’t v18, the phone is still on an old copy. Close the app from the app switcher and reopen it.</div>
+          <div class="sl"><span>App version</span><span class="val">v19</span></div>
+          <div class="s wrap">If this isn’t v19, the phone is still on an old copy. Close the app from the app switcher and reopen it.</div>
         </div>
       </div>
       <div class="grp">Notifications</div>
@@ -1088,7 +1131,7 @@
   if ("serviceWorker" in navigator && !LOCAL) {
     let swReload = false;
     navigator.serviceWorker.addEventListener("controllerchange", () => { if (swReload) return; swReload = true; location.reload(); });
-    navigator.serviceWorker.register("sw.js?v=18", { updateViaCache: "none" }).then(reg => { try { reg.update(); } catch (e) {} }).catch(() => {});
+    navigator.serviceWorker.register("sw.js?v=19", { updateViaCache: "none" }).then(reg => { try { reg.update(); } catch (e) {} }).catch(() => {});
   }
   render();
   if (BASE) poll();

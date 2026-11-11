@@ -60,6 +60,14 @@ canvas{display:block;width:100%}
 .ranges{display:flex;justify-content:space-between;padding:8px var(--g) 0}
 .ranges button{min-width:44px;height:44px;border-radius:22px;font-size:14px;font-weight:600;color:var(--sec)}
 .ranges button.on{background:var(--card);color:var(--text)}
+
+.chartmarks{position:absolute;inset:0;pointer-events:none;z-index:2;overflow:hidden}
+.cmark{position:absolute;pointer-events:auto;display:flex;align-items:center;gap:4px;height:22px;padding:0 7px 0 3px;border-radius:11px;box-sizing:border-box;font-size:11px;font-weight:600;line-height:1;color:var(--blue);background:rgba(10,132,255,.22);box-shadow:0 0 0 1px rgba(10,132,255,.28);-webkit-backdrop-filter:blur(8px);backdrop-filter:blur(8px)}
+.cmark.green{color:var(--green);background:rgba(0,211,90,.20);box-shadow:0 0 0 1px rgba(0,211,90,.28)}
+.cmark.red{color:var(--red);background:rgba(255,69,58,.20);box-shadow:0 0 0 1px rgba(255,69,58,.28)}
+.cmark .lg{flex:0 0 16px;box-shadow:0 0 0 1px rgba(0,0,0,.25)}
+.cmark span{white-space:nowrap;overflow:hidden}
+.cmark::after{content:"";position:absolute;inset:-8px}
 .chartempty{position:absolute;left:0;right:0;top:50%;transform:translateY(-50%);text-align:center;color:var(--sec);font-size:15px;padding-top:28px}
 
 /* section header */

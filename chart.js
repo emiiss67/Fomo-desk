@@ -66,7 +66,8 @@
     requestAnimationFrame(step);
   }
 
-  /* Home line: points [[iso, value]], marks [{ts, text, color}], start = night start value. */
+  /* Home line: points [[iso, value]], marks [{ts, text, color, kind, mint, label}], start = night start value.
+     Dots stay on the canvas; compact icon chips are laid out and handed to data.onMarks. */
   function line(canvas, data, prev) {
     const C = themeC();
     const pts = (data.points || []).map(p => [Date.parse(p[0]), p[1]]).filter(p => p[1] !== null);
@@ -74,13 +75,51 @@
     const H = 220;
     const prevLen = prev && prev.len || 0, prevMarks = prev && prev.marks || 0;
     const grow = pts.length > prevLen && prevLen > 0;
+    function shortLabel(m) {
+      if (m.label) return m.label;
+      if (m.kind === "bought" || /^Bought /i.test(m.text || "")) return "Buy";
+      return m.text || "";
+    }
+    function layoutMarks(ctx, w, X, yAt) {
+      const MH = 22, GAP = 4, ICON = 16;
+      ctx.font = "600 11px " + FONT;
+      const vis = marks.map(m => ({ ...m, x: X(Date.parse(m.ts)), label: shortLabel(m) }))
+        .filter(m => m.x >= -8 && m.x <= w + 8)
+        .sort((a, b) => a.x - b.x);
+      const boxes = [];
+      const fits = (x, y, mw) => {
+        if (y < 1 || y + MH > H - 1 || x < 0 || x + mw > w) return false;
+        return boxes.every(b => x + mw + GAP <= b.x || b.x + b.w + GAP <= x || y + MH + 2 <= b.y || b.y + b.h + 2 <= y);
+      };
+      const nudges = [0, -10, 10, -20, 20, -32, 32, -46, 46, -60, 60];
+      vis.forEach(m => {
+        const tw = ctx.measureText(m.label).width;
+        const mw = Math.ceil(3 + ICON + 4 + tw + 7);
+        const ideal = Math.min(Math.max(m.x - mw / 2, 0), Math.max(0, w - mw));
+        const yLine = yAt(m.x);
+        let placed = null;
+        const tryPos = (x, y) => { if (!placed && fits(x, y, mw)) placed = { x, y }; };
+        for (let r = 0; r < 6 && !placed; r++) {
+          const y = yLine - 8 - MH - r * (MH + GAP);
+          for (const d of nudges) tryPos(Math.min(Math.max(ideal + d, 0), Math.max(0, w - mw)), y);
+        }
+        for (let r = 0; r < 6 && !placed; r++) {
+          const y = yLine + 8 + r * (MH + GAP);
+          for (const d of nudges) tryPos(Math.min(Math.max(ideal + d, 0), Math.max(0, w - mw)), y);
+        }
+        if (!placed) placed = { x: ideal, y: Math.max(2, Math.min(yLine - 8 - MH, H - MH - 2)) };
+        boxes.push({ x: placed.x, y: placed.y, w: mw, h: MH, label: m.label, mint: m.mint, kind: m.kind,
+          color: m.color, text: m.text, name: m.name, logo: m.logo, link: m.link });
+      });
+      return boxes;
+    }
     function draw(p, markAlpha) {
       const { ctx, w, h } = setup(canvas, H);
       const top = 64, bot = h - 12;
       if (pts.length === 0) {
         ctx.setLineDash([3, 5]); ctx.strokeStyle = C.ter; ctx.lineWidth = 1;
         ctx.beginPath(); ctx.moveTo(0, (top + bot) / 2); ctx.lineTo(w, (top + bot) / 2); ctx.stroke(); ctx.setLineDash([]);
-        return;
+        return { ctx, w, X: () => 0, yAt: () => (top + bot) / 2 };
       }
       const vals = pts.map(q => q[1]).concat(data.start != null ? [data.start] : []);
       let lo = Math.min(...vals), hi = Math.max(...vals);
@@ -107,29 +146,22 @@
       ctx.strokeStyle = C.green; ctx.lineWidth = 2; ctx.lineJoin = "round"; ctx.stroke();
       const last = xy[xy.length - 1];
       ctx.beginPath(); ctx.arc(last[0], last[1], 4, 0, Math.PI * 2); ctx.fillStyle = C.green; ctx.fill();
-      ctx.font = "600 12px " + FONT; ctx.textBaseline = "middle";
-      const rows = [];
       const yAt = x => { let best = xy[0]; for (const q of xy) if (Math.abs(q[0] - x) < Math.abs(best[0] - x)) best = q; return best[1]; };
       marks.map(m => ({ ...m, x: X(Date.parse(m.ts)) })).filter(m => m.x >= -1 && m.x <= w + 1)
-        .sort((a, b) => a.x - b.x).forEach((m, i) => {
-          const tw = ctx.measureText(m.text).width + 14;
-          let x = Math.min(Math.max(m.x - tw / 2, 0), w - tw);
-          let r = 0;
-          while (rows[r] && rows[r].some(s => x < s[1] + 4 && x + tw > s[0] - 4)) r++;
-          (rows[r] = rows[r] || []).push([x, x + tw]);
-          let y = Math.min(yAt(m.x) - 18 - r * 22, bot - 10);
-          y = Math.max(y, 10);
+        .forEach((m, i) => {
           const col = { blue: C.blue, green: C.green, red: C.red }[m.color] || C.blue;
           ctx.globalAlpha = i >= prevMarks ? markAlpha : 1;
-          ctx.fillStyle = rgba(col, 0.2); roundRect(ctx, x, y - 10, tw, 20, 10); ctx.fill();
-          ctx.fillStyle = col; ctx.fillText(m.text, x + 7, y + 0.5);
-          ctx.beginPath(); ctx.arc(m.x, yAt(m.x), 3, 0, Math.PI * 2); ctx.fill();
+          ctx.beginPath(); ctx.arc(m.x, yAt(m.x), 3, 0, Math.PI * 2); ctx.fillStyle = col; ctx.fill();
           ctx.globalAlpha = 1;
         });
+      return { ctx, w, X, yAt };
     }
+    const geo = draw(1, 1);
+    const items = pts.length && geo ? layoutMarks(geo.ctx, geo.w, geo.X, geo.yAt) : [];
+    if (typeof data.onMarks === "function") data.onMarks(items);
     if (grow || marks.length > prevMarks) {
       anim(250, p => draw(p, Math.min(1, p * 250 / 200)));
-    } else draw(1, 1);
+    }
     return { len: pts.length, marks: marks.length };
   }
 
