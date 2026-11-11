@@ -1002,6 +1002,10 @@
             return `<button type="button" class="swatch${candleId() === id ? " on" : ""}" data-candle="${id}" aria-pressed="${candleId() === id}" aria-label="${esc(ch.label)}"><i class="csticks"><b style="background:${up}"></b><b style="background:${down}"></b></i><span>${esc(ch.label)}</span></button>`;
           }).join("")}</div>
         </div>
+        <div class="setrow" id="appver">
+          <div class="sl"><span>App version</span><span class="val">v18</span></div>
+          <div class="s wrap">If this isn’t v18, the phone is still on an old copy. Close the app from the app switcher and reopen it.</div>
+        </div>
       </div>
       <div class="grp">Notifications</div>
       <div class="list">
@@ -1081,7 +1085,11 @@
   });
   let rz; window.addEventListener("resize", () => { clearTimeout(rz); rz = setTimeout(render, 150); });
 
-  if ("serviceWorker" in navigator && !LOCAL) navigator.serviceWorker.register("sw.js?v=17", { updateViaCache: "none" }).catch(() => {});
+  if ("serviceWorker" in navigator && !LOCAL) {
+    let swReload = false;
+    navigator.serviceWorker.addEventListener("controllerchange", () => { if (swReload) return; swReload = true; location.reload(); });
+    navigator.serviceWorker.register("sw.js?v=18", { updateViaCache: "none" }).then(reg => { try { reg.update(); } catch (e) {} }).catch(() => {});
+  }
   render();
   if (BASE) poll();
   window.desk = { S, render };
