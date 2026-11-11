@@ -100,7 +100,11 @@
     classic: { label: "Classic", blurb: "The previous look, if you want to go back." },
     terminal: { label: "Terminal", blurb: "A tighter trading desk — mono numbers and a flush tab bar." },
     studio: { label: "Studio", blurb: "Airy and large, with a soft pill tab bar." },
-    pulse: { label: "Pulse", blurb: "Bolder accents and a stronger color wash." }
+    pulse: { label: "Pulse", blurb: "Bolder accents and a stronger color wash." },
+    editorial: { label: "Editorial", blurb: "A financial journal — serif type, hairlines, and almost no chrome." },
+    block: { label: "Block", blurb: "Brutal and boxed, with heavy type and hard edges." },
+    halo: { label: "Halo", blurb: "A soft consumer app — rounded type and a circular balance." },
+    blotter: { label: "Blotter", blurb: "A market blotter — mono type, dense rows, and a ticker header." }
   };
   const UI_IDS = Object.keys(UIS);
   const COLOR_KEYS = [
@@ -117,6 +121,18 @@
     { key: "up", label: "Candle up" },
     { key: "down", label: "Candle down" }
   ];
+  const COLOR_PALETTES = {
+    ice:    { label: "Ice",    bg: "#071018", text: "#e8f4ff", card: "#0e1a24", accent: "#7ad7ff", green: "#3ee0b0", red: "#ff6b8a", blue: "#7ad7ff", orange: "#ffc86b", up: "#3ee0b0", down: "#ff6b8a" },
+    solar:  { label: "Solar",  bg: "#140e08", text: "#ffeccc", card: "#1c140c", accent: "#ffb020", green: "#c6d44a", red: "#ff6a3d", blue: "#ffc46b", orange: "#ff8a3d", up: "#e6c35c", down: "#ff6a3d" },
+    neon:   { label: "Neon",   bg: "#05050a", text: "#f4f4ff", card: "#101018", accent: "#d94cff", green: "#00ff9c", red: "#ff2d6a", blue: "#3df0ff", orange: "#ffb020", up: "#00ff9c", down: "#ff2d6a" },
+    sage:   { label: "Sage",   bg: "#0c1210", text: "#e6eee8", card: "#141c18", accent: "#8fbfa0", green: "#6fbf8a", red: "#e07a6a", blue: "#7aa8a0", orange: "#d4a574", up: "#6fbf8a", down: "#e07a6a" },
+    paper:  { label: "Paper",  bg: "#f4efe6", text: "#1a1714", card: "#fffaf3", accent: "#b5451a", green: "#2a7a4a", red: "#c43c2e", blue: "#2a5fa8", orange: "#c67a16", up: "#2a7a4a", down: "#c43c2e" },
+    royal:  { label: "Royal",  bg: "#0b1020", text: "#f0e6c8", card: "#141a30", accent: "#d4b15a", green: "#6bcf9a", red: "#e06b6b", blue: "#8aa4ff", orange: "#e0a04a", up: "#d4b15a", down: "#e06b6b" },
+    candy:  { label: "Candy",  bg: "#140814", text: "#ffe8f4", card: "#1c101c", accent: "#ff5aa5", green: "#5ee0c0", red: "#ff4d6d", blue: "#c9a0ff", orange: "#ffb347", up: "#5ee0c0", down: "#ff4d6d" },
+    mono:   { label: "Mono",   bg: "#0a0a0a", text: "#f2f2f2", card: "#161616", accent: "#f2f2f2", green: "#d0d0d0", red: "#888888", blue: "#c0c0c0", orange: "#a0a0a0", up: "#ffffff", down: "#666666" }
+  };
+  const CHIP_COLORS = ["#000000","#1c1c1e","#3a3a3c","#8e8e93","#e5e5ea","#f5f5f7","#ffffff","#0a84ff","#5e5ce6","#bf5af2","#ff2d55","#ff453a","#ff9f0a","#ffd60a","#30d158","#00c7be","#64d2ff","#ac8e68"];
+  let colorTarget = { key: "accent", group: "ui" };
   const pref = (key, allowed, fallback) => { try { const v = localStorage.getItem(key); return allowed.includes(v) ? v : fallback; } catch (e) { return fallback; } };
   const themeId = () => { try { return THEMES[localStorage.getItem("desk.theme")] ? localStorage.getItem("desk.theme") : "midnight"; } catch (e) { return "midnight"; } };
   const candleId = () => { try { const v = localStorage.getItem("desk.candles"); if (v === "custom") return "custom"; return CANDLES[v] ? v : "classic"; } catch (e) { return "classic"; } };
@@ -251,6 +267,7 @@
         o[key] = h;
         localStorage.setItem("desk.custom", JSON.stringify(o));
       }
+      localStorage.removeItem("desk.palette");
     } catch (e) {}
     applyAppearance();
     const cvs = document.getElementById("candles"); if (cvs) cvs._lastC = null;
@@ -272,11 +289,29 @@
     }
   }
   function resetCustomColors() {
-    try { localStorage.removeItem("desk.custom"); localStorage.removeItem("desk.candleCustom"); } catch (e) {}
+    try { localStorage.removeItem("desk.custom"); localStorage.removeItem("desk.candleCustom"); localStorage.removeItem("desk.palette"); } catch (e) {}
     if (candleId() === "custom") { try { localStorage.setItem("desk.candles", "classic"); } catch (e) {} }
     applyAppearance();
     const cvs = document.getElementById("candles"); if (cvs) cvs._lastC = null;
     render();
+  }
+  function applyPalette(id) {
+    const p = COLOR_PALETTES[id];
+    if (!p) return;
+    const custom = {};
+    COLOR_KEYS.forEach(k => { if (p[k.key]) custom[k.key] = p[k.key]; });
+    try {
+      localStorage.setItem("desk.custom", JSON.stringify(custom));
+      localStorage.setItem("desk.candleCustom", JSON.stringify({ up: p.up, down: p.down }));
+      localStorage.setItem("desk.candles", "custom");
+      localStorage.setItem("desk.palette", id);
+    } catch (e) {}
+    applyAppearance();
+    const cvs = document.getElementById("candles"); if (cvs) cvs._lastC = null;
+    render();
+  }
+  function paletteId() {
+    try { const id = localStorage.getItem("desk.palette"); return COLOR_PALETTES[id] ? id : ""; } catch (e) { return ""; }
   }
   function setTheme(id) { try { localStorage.setItem("desk.theme", THEMES[id] ? id : "midnight"); } catch (e) {} applyAppearance(); const cvs = document.getElementById("candles"); if (cvs) cvs._lastC = null; render(); }
   function setCandles(id) { try { localStorage.setItem("desk.candles", (id === "custom" || CANDLES[id]) ? id : "classic"); } catch (e) {} applyAppearance(); const cvs = document.getElementById("candles"); if (cvs) cvs._lastC = null; render(); }
@@ -1100,7 +1135,8 @@
 
   function pickerRow(key, label, value, group) {
     const hex = toInputHex(value);
-    return `<label class="picker"><span class="sw" style="background:${hex}"><input type="color" data-ckey="${esc(key)}" data-cgroup="${esc(group || "ui")}" value="${hex}" aria-label="${esc(label)}"></span><span class="plab">${esc(label)}</span><input class="phex" type="text" value="${hex}" maxlength="7" spellcheck="false" autocapitalize="off" autocomplete="off" aria-label="${esc(label)} hex" data-ckey="${esc(key)}" data-cgroup="${esc(group || "ui")}"></label>`;
+    const on = colorTarget.key === key && colorTarget.group === (group || "ui");
+    return `<label class="picker${on ? " on" : ""}"><span class="sw" style="background:${hex}"><input type="color" data-ckey="${esc(key)}" data-cgroup="${esc(group || "ui")}" value="${hex}" aria-label="${esc(label)}"></span><span class="plab">${esc(label)}</span><input class="phex" type="text" value="${hex}" maxlength="7" spellcheck="false" autocapitalize="off" autocomplete="off" aria-label="${esc(label)} hex" data-ckey="${esc(key)}" data-cgroup="${esc(group || "ui")}"></label>`;
   }
   function accountTab() {
     if (!S.state || !S.account) return navbar() + `<div class="sh"><h2>Account</h2></div><div class="gut">${sk(120, null, "border-radius:14px")}${sk(220, null, "border-radius:14px;margin-top:16px")}${sk(400, null, "border-radius:14px;margin-top:16px")}</div>`;
@@ -1127,7 +1163,7 @@
       <div class="list">
         <div class="setrow" id="uipref">
           <div class="sl"><span>Layout</span></div>
-          <div class="s wrap">${esc(UIS[uiId()].blurb)} Your colors below work on every look.</div>
+          <div class="s wrap">${esc(UIS[uiId()].blurb)} Editorial, Block, Halo, and Blotter are full redesigns. The first five stay as they are. Your colors work on every look.</div>
           <div class="dswatches" id="uiseg" role="group" aria-label="Layout">${UI_IDS.map(id =>
             `<button type="button" class="dswatch${uiId() === id ? " on" : ""}" data-ui="${id}" aria-pressed="${uiId() === id}" aria-label="${esc(UIS[id].label)}"><i class="dprev ${id}"></i><span>${esc(UIS[id].label)}</span></button>`).join("")}</div>
         </div>
@@ -1191,7 +1227,11 @@
         </div>
         <div class="setrow" id="custompref">
           <div class="sl"><span>Your colors</span></div>
-          <div class="s wrap">Pick any color for the app, then the candles. These sit on top of the palette. Reset clears them.</div>
+          <div class="s wrap">Tap a palette to color the whole app, or pick a row below and use a chip — or the color picker — to set that part yourself. These sit on top of the starting palette. Reset clears them.</div>
+          <div class="pswatches" id="palettes" role="group" aria-label="Color palettes">${Object.entries(COLOR_PALETTES).map(([id, p]) =>
+            `<button type="button" class="pswatch${paletteId() === id ? " on" : ""}" data-palette="${id}" aria-pressed="${paletteId() === id}" aria-label="${esc(p.label)}"><i class="pstripes"><b style="background:${p.bg}"></b><b style="background:${p.card}"></b><b style="background:${p.accent}"></b><b style="background:${p.green}"></b><b style="background:${p.red}"></b></i><span>${esc(p.label)}</span></button>`).join("")}</div>
+          <div class="chips" id="colorchips" role="group" aria-label="Color chips">${CHIP_COLORS.map(h =>
+            `<button type="button" class="chipc" data-hex="${h}" style="background:${h}" aria-label="${h}"></button>`).join("")}</div>
           <div class="pickers" id="colorpick">${(() => {
             const base = THEMES[themeId()] || THEMES.midnight, t = withCustom(base), c = candlePair(t);
             return COLOR_KEYS.map(k => pickerRow(k.key, k.label, t[k.key], "ui")).join("") +
@@ -1212,8 +1252,8 @@
           })()}</div>
         </div>
         <div class="setrow" id="appver">
-          <div class="sl"><span>App version</span><span class="val">v20</span></div>
-          <div class="s wrap">If this isn’t v20, the phone is still on an old copy. Close the app from the app switcher and reopen it.</div>
+          <div class="sl"><span>App version</span><span class="val">v21</span></div>
+          <div class="s wrap">If this isn’t v21, the phone is still on an old copy. Close the app from the app switcher and reopen it.</div>
         </div>
       </div>
       <div class="grp">Notifications</div>
@@ -1254,6 +1294,22 @@
         el.addEventListener("change", onPick);
         if (el.classList.contains("phex")) el.addEventListener("blur", onPick);
       });
+      const setTarget = (key, group) => {
+        colorTarget = { key, group: group || "ui" };
+        document.querySelectorAll("#colorpick .picker").forEach(row => {
+          const inp = row.querySelector("input[data-ckey]");
+          const on = inp && inp.dataset.ckey === key && inp.dataset.cgroup === colorTarget.group;
+          row.classList.toggle("on", !!on);
+        });
+      };
+      document.querySelectorAll("#colorpick .picker").forEach(row => {
+        const inp = row.querySelector("input[data-ckey]");
+        if (!inp) return;
+        row.addEventListener("click", () => setTarget(inp.dataset.ckey, inp.dataset.cgroup));
+        row.querySelectorAll("input").forEach(el => el.addEventListener("focus", () => setTarget(inp.dataset.ckey, inp.dataset.cgroup)));
+      });
+      document.querySelectorAll("#colorchips [data-hex]").forEach(b => b.onclick = ev => { ev.preventDefault(); setCustom(colorTarget.key, b.dataset.hex, colorTarget.group); });
+      document.querySelectorAll("#palettes [data-palette]").forEach(b => b.onclick = ev => { ev.preventDefault(); applyPalette(b.dataset.palette); });
       const rst = document.getElementById("resetcolors");
       if (rst) rst.onclick = ev => { ev.preventDefault(); resetCustomColors(); };
       const inv = document.getElementById("invite");
@@ -1319,7 +1375,7 @@
   if ("serviceWorker" in navigator && !LOCAL) {
     let swReload = false;
     navigator.serviceWorker.addEventListener("controllerchange", () => { if (swReload) return; swReload = true; location.reload(); });
-    navigator.serviceWorker.register("sw.js?v=20", { updateViaCache: "none" }).then(reg => { try { reg.update(); } catch (e) {} }).catch(() => {});
+    navigator.serviceWorker.register("sw.js?v=21", { updateViaCache: "none" }).then(reg => { try { reg.update(); } catch (e) {} }).catch(() => {});
   }
   render();
   if (BASE) poll();
