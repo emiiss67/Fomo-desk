@@ -339,10 +339,46 @@
   const safeUrl = u => { try { const x = new URL(u); return x.protocol === "https:" ? u : null; } catch (e) { return null; } };
   const ext = (u, inner, cls) => { const s = safeUrl(u); return s ? `<a class="${cls || ""}" href="${esc(s)}" target="_blank" rel="noopener">${inner}</a>` : inner; };
   const money = v => v == null ? "—" : (v < 0 ? "-" : "") + "$" + Math.abs(v).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  const moneyS = v => v == null ? "—" : (v >= 0 ? "+" : "-") + "$" + Math.abs(v).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
   const kfmt = v => v == null ? "—" : v >= 1e6 ? "$" + (v / 1e6).toFixed(2) + "M" : v >= 1e3 ? "$" + (v / 1e3).toFixed(1) + "K" : "$" + v.toFixed(0);
   // same subscript-zero format as the chart axis: 0.000000001458 -> "$0.0₈1458" (never "e-" notation)
   const price = v => v == null || !isFinite(v) ? "—" : "$" + (v >= 1 && v < 1000 ? v.toFixed(4) : window.DeskChart.fmtP(v));
   const sgn = (v, d = 2) => v == null ? "—" : (v >= 0 ? "+" : "") + v.toFixed(d) + "%";
+  // Mark-to-market: size * price / entry. Missing price or entry → null, never a made-up number.
+  function markValue(size, entry, px) {
+    if (size == null || entry == null || !(entry > 0) || px == null || !isFinite(size) || !isFinite(px)) return null;
+    return size * px / entry;
+  }
+  function markPct(entry, px) {
+    if (entry == null || !(entry > 0) || px == null || !isFinite(px)) return null;
+    return 100 * (px / entry - 1);
+  }
+  function posMark(p, mint, c) {
+    if (!p) return { now: null, pnl: null, pct: null, afterFees: false };
+    if (p.open) {
+      const px = c ? livePrice(mint, c) : null;
+      const now = markValue(p.sizeUsd, p.entryPrice, px);
+      const pnl = now == null || p.sizeUsd == null ? null : now - p.sizeUsd;
+      return { now, pnl, pct: markPct(p.entryPrice, px), afterFees: false };
+    }
+    const now = p.exitValueUsd != null ? p.exitValueUsd : markValue(p.sizeUsd, p.entryPrice, p.exitPrice);
+    const afterFees = p.pnlUsd != null;
+    const pnl = afterFees ? p.pnlUsd : (now == null || p.sizeUsd == null ? null : now - p.sizeUsd);
+    const pct = afterFees && p.sizeUsd ? 100 * p.pnlUsd / p.sizeUsd : markPct(p.entryPrice, p.exitPrice);
+    return { now, pnl, pct, afterFees };
+  }
+  function posPnlBlock(p, mint, c) {
+    const m = posMark(p, mint, c);
+    const cls = m.pct == null && m.pnl == null ? "ter" : (m.pct != null ? m.pct : m.pnl) >= 0 ? "green" : "red";
+    const feeLab = m.afterFees ? "after fees" : "before fees";
+    const key = (mint || "pos") + (p.open ? "o" : "x");
+    return `<div class="pospnl">
+      <div class="posnow"><div class="posbig">${tick("pv" + key, m.now, money)}</div><div class="s">now</div></div>
+      <div class="poschg"><div class="posbig ${cls}">${tick("pp" + key, m.pct, v => sgn(v, 2))}</div><div class="s">${feeLab}</div></div>
+    </div>
+    <div class="kv"><span class="sec">Put in</span><span>${money(p.sizeUsd)}</span></div>
+    <div class="kv"><span class="sec">P&amp;L · ${feeLab}</span><span class="${cls}">${moneyS(m.pnl)}</span></div>`;
+  }
   const hm = iso => iso ? new Date(iso).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", hour12: false }) : "";
   const card = n => S.state && S.state.agents.find(a => a.name === n);
   const route = () => { const h = location.hash.replace(/^#\/?/, "").split("?")[0].split("/"); return { name: h[0] || "home", arg: h[1] || null }; };
@@ -739,11 +775,14 @@
     return [...latest.values()].filter(r => r.kind === "bought").map(r => ({ row: r, coin: S.coin[r.mint] }));
   }
   function posRow(o) {
-    const r = o.row, c = o.coin, p = c && c.position, since = p && p.since_entry_pct;
+    const r = o.row, c = o.coin, p = c && c.position, m = p ? posMark(p, r.mint, c) : null;
     const name = (r.title || "").replace(/^Bought /, "");
+    const sub = p ? (m && m.now != null ? money(p.sizeUsd) + " in → " + money(m.now) : money(p.sizeUsd) + " in")
+      : esc(r.value || r.subtitle || "");
+    const pct = m && m.pct;
     return `<a class="row" href="${coinHref(r.mint)}">${logo(name, r.logo || (c && c.logo), 40)}<span class="main"><div class="t">${esc(name)}</div>
-      <div class="s">${p ? money(p.sizeUsd) + " in · entry " + price(p.entryPrice) : esc(r.value || r.subtitle || "")}</div></span>
-      <span class="v">${since == null ? '<span class="ter">—</span>' : `<span class="cpill ${since >= 0 ? "up" : "down"}">${sgn(since, 1)}</span>`}</span></a>`;
+      <div class="s">${sub}</div></span>
+      <span class="v">${pct == null ? '<span class="ter">—</span>' : `<span class="cpill ${pct >= 0 ? "up" : "down"}">${sgn(pct, 1)}</span>`}</span></a>`;
   }
   const STAGE = { watching: ["Watching", "cyan"], killed: ["Skipped", "ter"], passed: ["→ Auditor", "cyan"], auditing: ["Auditing", "cyan"],
                   rejected: ["Rejected", "red"], cleared: ["Cleared", "green"], holding: ["Holding", "green"], traded: ["Traded", "sec"] };
@@ -809,7 +848,6 @@
     } };
   }
 
-  const moneyS = v => v == null ? "—" : (v >= 0 ? "+" : "-") + "$" + Math.abs(v).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
   const nqty = v => v == null || !isFinite(Number(v)) ? "—" : String(Number(v));
   function reportLabel(c) {
     return (c && (c.name || c.symbol)) || (c && c.mint ? c.mint.slice(0, 4) + "…" + c.mint.slice(-4) : "—");
@@ -1086,15 +1124,15 @@
           ${c.pendingBuy.sizeNative != null ? `<div class="kv"><span class="sec">${esc(c.pendingBuy.nativeSymbol || "SOL")}</span><span>${nqty(c.pendingBuy.sizeNative)} ${esc(c.pendingBuy.nativeSymbol || "")}</span></div>` : ""}
           <div class="kv"><span class="sec">Share of stack</span><span>${c.pendingBuy.stackPct == null ? "—" : c.pendingBuy.stackPct + "%"}</span></div>
           <div class="s wrap">${c.pendingBuy.mode === "LIVE" ? (c.pendingBuy.add ? "Buy this extra amount inside FOMO, then tap Bought in Telegram. The Sell button stays for the open position." : "Buy this amount inside FOMO, then tap Bought in Telegram.") : (c.pendingBuy.add ? "This is how much the desk wants to add on this dip." : "This is how much the desk sized for this coin.")}</div></div>` : ""}
-      ${p ? `<div class="card glass"><h3>Your position · ${money(p.sizeUsd)} in · ${esc(p.agent)}</h3>
+      ${p ? `<div class="card glass poscard"><h3>Your position · ${esc(p.agent)}</h3>
+          ${posPnlBlock(p, mint, c)}
           <div class="kv"><span class="sec">Entry${mcOn ? " MC" : ""}</span><span>${disp(p.entryPrice)}</span></div>
           ${p.hold ? `<div class="kv"><span class="sec">Hold</span><span>owner hold · no stop / trail / timeout (rug still exits)</span></div>` : ""}
           <div class="kv"><span class="sec">${esc(p.nativeSymbol || "SOL")} in</span><span>${nat(p.nativeIn)}</span></div>
           <div class="kv"><span class="sec">Entry fee</span><span>${p.entryFeeUsd == null ? "n/a" : money(p.entryFeeUsd)}</span></div>
           ${p.open ? "" : `<div class="kv"><span class="sec">Exit${mcOn ? " MC" : ""} · ${esc(p.exitReason)}</span><span>${disp(p.exitPrice)}</span></div>
           <div class="kv"><span class="sec">${esc(p.nativeSymbol || "SOL")} out</span><span>${nat(p.nativeOut)}</span></div>
-          <div class="kv"><span class="sec">Fees (in + out)</span><span>${p.feesUsd == null ? "n/a" : money(p.feesUsd)}</span></div>
-          <div class="kv"><span class="sec">PnL after fees</span><span class="${p.pnlUsd >= 0 ? "green" : "red"}">${money(p.pnlUsd)}</span></div>`}</div>` : ""}
+          <div class="kv"><span class="sec">Fees (in + out)</span><span>${p.feesUsd == null ? "n/a" : money(p.feesUsd)}</span></div>`}</div>` : ""}
       ${x ? `<div class="card glass"><h3>Exit</h3>
           <div class="kv"><span class="sec">Stop line · -${x.stop_pct}%</span><span class="red">${disp(x.stop_line)}</span></div>
           <div class="kv"><span class="sec">Trail line · ${x.trail_pct}%</span><span class="${x.trail_active ? "green" : "ter"}">${x.trail_active ? disp(x.trail_line) : "not active yet"}</span></div>
@@ -1262,8 +1300,8 @@
           })()}</div>
         </div>
         <div class="setrow" id="appver">
-          <div class="sl"><span>App version</span><span class="val">v24</span></div>
-          <div class="s wrap">If this isn’t v24, the phone is still on an old copy. Close the app from the app switcher and reopen it.</div>
+          <div class="sl"><span>App version</span><span class="val">v25</span></div>
+          <div class="s wrap">If this isn’t v25, the phone is still on an old copy. Close the app from the app switcher and reopen it.</div>
         </div>
       </div>
       <div class="grp">Notifications</div>

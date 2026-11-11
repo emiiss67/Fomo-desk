@@ -153,6 +153,14 @@ canvas{display:block;width:100%}
 .card{margin:14px var(--g) 0;background:var(--card);border-radius:14px;padding:14px}
 .card h3{margin:0 0 8px;font-size:15px;font-weight:600;color:var(--sec)}
 .kv{display:flex;justify-content:space-between;min-height:32px;align-items:center;font-size:15px}
+/* FOMO-style position mark: put in, current value, percent */
+.pospnl{display:flex;justify-content:space-between;align-items:flex-end;gap:16px;margin:2px 0 10px;padding-bottom:12px;border-bottom:.5px solid var(--sep)}
+.pospnl .posbig{font-size:28px;font-weight:700;letter-spacing:-.7px;line-height:1.1;font-variant-numeric:tabular-nums}
+.pospnl .poschg{text-align:right}
+.pospnl .posbig.green{color:var(--green)}
+.pospnl .posbig.red{color:var(--red)}
+.pospnl .posbig.ter{color:var(--ter)}
+.pospnl .s{margin-top:4px}
 .cta{position:fixed;left:var(--g);right:var(--g);bottom:calc(var(--tab) + 12px);height:52px;border-radius:26px;
   background:var(--green);color:#000;font-weight:700;font-size:17px;display:flex;align-items:center;justify-content:center;z-index:15}
 .cta.sell{background:var(--red);color:#fff}
@@ -461,6 +469,7 @@ html[data-ui="nova"] .toast{bottom:calc(var(--tab) + 16px);border:1px solid var(
 html[data-ui="nova"] .seg span.on,html[data-ui="nova"] .seg button.on{background:color-mix(in srgb,var(--accent) 18%,transparent);color:var(--accent)}
 html[data-ui="nova"] .grp{font-size:12px;font-weight:600;letter-spacing:.01em;padding-top:26px}
 html[data-ui="nova"] .rptsum .rptpnl{font-size:40px;letter-spacing:-1.2px}
+html[data-ui="nova"] .pospnl .posbig{font-size:34px;letter-spacing:-1.2px}
 html[data-ui="nova"][data-theme="daylight"] .hero,
 html[data-ui="nova"][data-theme="daylight"] .list,
 html[data-ui="nova"][data-theme="daylight"] .card,
@@ -588,6 +597,7 @@ html[data-ui="terminal"] .hero .big,
 html[data-ui="terminal"] .pricebig,
 html[data-ui="terminal"] .acard .stat,
 html[data-ui="terminal"] .rptsum .rptpnl{font-family:var(--mono);font-weight:600;letter-spacing:-.04em}
+html[data-ui="terminal"] .pospnl .posbig{font-family:var(--mono);font-weight:600;letter-spacing:-.04em}
 html[data-ui="terminal"] .hero .big{font-size:48px}
 html[data-ui="terminal"] .tabbar{
   left:0;right:0;bottom:0;height:var(--tab);padding:0;padding-bottom:env(safe-area-inset-bottom);
