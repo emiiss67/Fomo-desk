@@ -34,10 +34,86 @@
   } catch (e) {} }
   const BASE = FIXTURE ? "/" + FIXTURE.replace(/[^\w-]/g, "") + "/" : (DP ? SUPA + encodeURIComponent(DP) + "/" : null);
 
-  const S = { tf: {}, chartOff: {}, state: null, chart: null, account: null, activity: [], coin: {}, audit: {}, decisions: {},
+  const S = { tf: {}, chartOff: {}, chartSlot: 9, state: null, chart: null, account: null, activity: [], coin: {}, audit: {}, decisions: {},
               reports: null, report: {}, missing: {}, err: false, lastGood: null, next: 0, range: "LIVE", search: "", showSearch: false };
   const view = document.getElementById("view"), offline = document.getElementById("offline");
   let chartPrev = null, odoPrev = null, beam = {}, execAnim = null;
+
+  // ---------- appearance (device-only; theme + candle colors + chart zoom) ----------
+  const THEMES = {
+    midnight: { label: "Midnight", bg: "#05070a", text: "#f4f6f8", sec: "rgba(226,232,240,.62)", ter: "rgba(226,232,240,.34)",
+      sep: "rgba(255,255,255,.07)", card: "rgba(22,26,32,.82)", card2: "rgba(255,255,255,.10)",
+      green: "#00e38c", red: "#ff5c7a", orange: "#ffb02e", cyan: "#5ad8ff", blue: "#4c9dff", yellow: "#ffd84d", pink: "#ff7ab6",
+      accent: "#00e38c", wash: "rgba(0,227,140,.10)", wash2: "rgba(90,216,255,.07)", hair: "rgba(255,255,255,.08)",
+      ctaText: "#00140b", tabbar: "rgba(10,12,16,.72)", themeColor: "#05070a" },
+    ocean: { label: "Ocean", bg: "#06141c", text: "#e8f4fa", sec: "rgba(220,236,245,.62)", ter: "rgba(220,236,245,.34)",
+      sep: "rgba(160,210,230,.10)", card: "rgba(10,28,40,.82)", card2: "rgba(90,216,255,.10)",
+      green: "#3ee0b0", red: "#ff6b7d", orange: "#ffb02e", cyan: "#5ad8ff", blue: "#4cc9ff", yellow: "#ffd84d", pink: "#ff7ab6",
+      accent: "#5ad8ff", wash: "rgba(90,216,255,.14)", wash2: "rgba(62,224,176,.07)", hair: "rgba(160,210,230,.12)",
+      ctaText: "#021018", tabbar: "rgba(6,20,28,.78)", themeColor: "#06141c" },
+    ember: { label: "Ember", bg: "#140c08", text: "#fbf3ea", sec: "rgba(251,243,234,.62)", ter: "rgba(251,243,234,.34)",
+      sep: "rgba(255,200,140,.10)", card: "rgba(36,22,14,.84)", card2: "rgba(255,176,46,.10)",
+      green: "#3dd68c", red: "#ff5c5c", orange: "#ffb02e", cyan: "#ffd19a", blue: "#ff9f4a", yellow: "#ffd84d", pink: "#ff8a6a",
+      accent: "#ffb02e", wash: "rgba(255,176,46,.14)", wash2: "rgba(255,92,80,.06)", hair: "rgba(255,200,140,.12)",
+      ctaText: "#1a0c02", tabbar: "rgba(20,12,8,.78)", themeColor: "#140c08" },
+    violet: { label: "Violet", bg: "#0c0816", text: "#f2eefe", sec: "rgba(242,238,254,.62)", ter: "rgba(242,238,254,.34)",
+      sep: "rgba(180,140,255,.12)", card: "rgba(24,18,40,.84)", card2: "rgba(180,140,255,.12)",
+      green: "#5ef0c0", red: "#ff6b9a", orange: "#ffb02e", cyan: "#9ad4ff", blue: "#8aa4ff", yellow: "#ffd84d", pink: "#ff7ab6",
+      accent: "#b48cff", wash: "rgba(180,140,255,.16)", wash2: "rgba(94,240,192,.06)", hair: "rgba(180,140,255,.14)",
+      ctaText: "#14081c", tabbar: "rgba(12,8,22,.78)", themeColor: "#0c0816" },
+    contrast: { label: "Contrast", bg: "#000000", text: "#ffffff", sec: "rgba(255,255,255,.70)", ter: "rgba(255,255,255,.42)",
+      sep: "rgba(255,255,255,.16)", card: "rgba(22,22,22,.92)", card2: "rgba(255,255,255,.14)",
+      green: "#00ff9a", red: "#ff3355", orange: "#ffb020", cyan: "#5ad8ff", blue: "#4c9dff", yellow: "#ffe14d", pink: "#ff7ab6",
+      accent: "#00ff9a", wash: "rgba(0,255,154,.14)", wash2: "rgba(255,51,85,.06)", hair: "rgba(255,255,255,.16)",
+      ctaText: "#00140b", tabbar: "rgba(0,0,0,.82)", themeColor: "#000000" },
+    daylight: { label: "Daylight", bg: "#eef0f4", text: "#111318", sec: "rgba(17,19,24,.62)", ter: "rgba(17,19,24,.40)",
+      sep: "rgba(17,19,24,.10)", card: "rgba(255,255,255,.90)", card2: "rgba(17,19,24,.08)",
+      green: "#007a4d", red: "#d0163c", orange: "#c47a00", cyan: "#007a9c", blue: "#0b5fff", yellow: "#b88600", pink: "#c43a7a",
+      accent: "#007a4d", wash: "rgba(0,122,77,.12)", wash2: "rgba(11,95,255,.06)", hair: "rgba(17,19,24,.10)",
+      ctaText: "#ffffff", tabbar: "rgba(255,255,255,.82)", themeColor: "#eef0f4" }
+  };
+  const CANDLES = {
+    classic: { label: "Green / red", up: null, down: null },
+    asian:   { label: "Red / green", up: "#e63946", down: "#2a9d8f" },
+    cyan:    { label: "Cyan / orange", up: "#5ad8ff", down: "#ff9f0a" },
+    gold:    { label: "Gold / red", up: "#ffd60a", down: "#ff453a" },
+    blue:    { label: "Blue / pink", up: "#4c9dff", down: "#ff7ab6" },
+    mono:    { label: "Solid / red", up: "text", down: "#ff5c7a" }
+  };
+  const themeId = () => { try { return THEMES[localStorage.getItem("desk.theme")] ? localStorage.getItem("desk.theme") : "midnight"; } catch (e) { return "midnight"; } };
+  const candleId = () => { try { return CANDLES[localStorage.getItem("desk.candles")] ? localStorage.getItem("desk.candles") : "classic"; } catch (e) { return "classic"; } };
+  function candlePair(th) {
+    const id = candleId(), t = th || THEMES[themeId()] || THEMES.midnight, c = CANDLES[id] || CANDLES.classic;
+    const up = c.up == null ? t.green : c.up === "text" ? t.text : c.up;
+    const down = c.down == null ? t.red : c.down;
+    return { up, down };
+  }
+  function applyAppearance() {
+    const id = themeId(), t = THEMES[id] || THEMES.midnight, c = candlePair(t);
+    const r = document.documentElement;
+    r.setAttribute("data-theme", id);
+    const set = (k, v) => r.style.setProperty(k, v);
+    ["bg","text","sec","ter","sep","card","card2","green","red","orange","cyan","blue","yellow","pink","accent","wash","wash2","hair"].forEach(k => set("--" + (k === "ctaText" ? "cta-text" : k), t[k]));
+    set("--cta-text", t.ctaText); set("--tabbar", t.tabbar);
+    set("--candle-up", c.up); set("--candle-down", c.down);
+    const meta = document.querySelector('meta[name="theme-color"]');
+    if (meta) meta.setAttribute("content", t.themeColor);
+    const sb = document.querySelector('meta[name="apple-mobile-web-app-status-bar-style"]');
+    if (sb) sb.setAttribute("content", id === "daylight" ? "default" : "black");
+    document.body && (document.body.style.backgroundColor = t.bg);
+    try {
+      const slot = parseFloat(localStorage.getItem("desk.slot"));
+      if (slot >= 3 && slot <= 24) S.chartSlot = slot;
+    } catch (e) {}
+  }
+  function setTheme(id) { try { localStorage.setItem("desk.theme", THEMES[id] ? id : "midnight"); } catch (e) {} applyAppearance(); const cvs = document.getElementById("candles"); if (cvs) cvs._lastC = null; render(); }
+  function setCandles(id) { try { localStorage.setItem("desk.candles", CANDLES[id] ? id : "classic"); } catch (e) {} applyAppearance(); const cvs = document.getElementById("candles"); if (cvs) cvs._lastC = null; render(); }
+  function saveSlot(cv) {
+    if (!cv || !cv._st) return;
+    S.chartSlot = cv._st.slot;
+    try { localStorage.setItem("desk.slot", String(cv._st.slot)); } catch (e) {}
+  }
+  applyAppearance();
 
   // ---------- helpers ----------
   const esc = s => String(s == null ? "" : s).replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -736,6 +812,7 @@
           <span class="mctip">${mcOn ? "tap to show price" : "tap to show market cap"}</span></button>
       </div>
       <div class="chartcard glass" id="chartcard"><div class="chsrc">${chartSrc(mint, c)}</div>
+        <div class="zoomrow"><span class="zoomctl" role="group" aria-label="Chart zoom"><button type="button" id="zout" aria-label="Zoom out">−</button><button type="button" id="zfit" aria-label="Show all candles">All</button><button type="button" id="zin" aria-label="Zoom in">+</button></span><span class="zoomhint">pinch or drag</span></div>
         <div class="chartwrap" style="position:relative"><canvas id="candles"></canvas><i id="breath" class="breath" hidden></i><div class="chshim"></div></div></div>
       <div class="tiles">${mcTile}${tile("liq", "Liquidity", kfmt(c.stats.liquidityUsd))}
         ${tile("vol", "24h volume", kfmt(c.stats.volume24h))}${tile("hold", "Holders", c.stats.holders == null ? "—" : c.stats.holders.toLocaleString())}
@@ -762,7 +839,12 @@
       gtWanted(mint, c.pool, c.age_h);
       const tf = tfFor(mint, c.age_h), step = TFS[tf][2], g = OHLC[mint + "|" + tf], gt = g && g.cs && g.cs.length ? g.cs : null;
       const cv = document.getElementById("candles");
-      if (cv && S.chartOff[mint] != null) cv._st = { off: S.chartOff[mint] };
+      if (cv) {
+        cv._st = Object.assign(cv._st || {}, {
+          off: S.chartOff[mint] != null ? S.chartOff[mint] : (cv._st && cv._st.off) || 0,
+          slot: S.chartSlot || (cv._st && cv._st.slot) || (window.DeskChart && DeskChart.SLOT_DEF) || 9
+        });
+      }
       const wrap = document.getElementById("chartcard");
       if (wrap) wrap.classList.toggle("loading", !!(g && g.loading && !gt));
       const base = gt || deskCandles(c.candles, step), k = mcOn ? fac : 1;
@@ -777,10 +859,18 @@
       if (tg) tg.onclick = flipMc;
       const pg = document.getElementById("pricetog");
       if (pg) pg.onclick = flipMc;
-      if (cv) cv.addEventListener("pointerup", () => { S.chartOff[mint] = cv._st.off; });
+      if (cv) {
+        cv.addEventListener("pointerup", () => { if (cv._st) { S.chartOff[mint] = cv._st.off; saveSlot(cv); } });
+        const doZoom = dir => { if (!window.DeskChart) return; DeskChart.zoom(cv, dir); if (cv._st) { S.chartOff[mint] = cv._st.off; saveSlot(cv); } };
+        const zout = document.getElementById("zout"), zin = document.getElementById("zin"), zfit = document.getElementById("zfit");
+        if (zout) zout.onclick = e => { e.preventDefault(); doZoom("out"); };
+        if (zin) zin.onclick = e => { e.preventDefault(); doZoom("in"); };
+        if (zfit) zfit.onclick = e => { e.preventDefault(); doZoom("fit"); };
+      }
       breathe(lastC);
       view.querySelectorAll("[data-tf]").forEach(b => b.onclick = e => { e.preventDefault(); if (S.tf[mint] === b.dataset.tf) return;
-        S.tf[mint] = b.dataset.tf; S.chartOff[mint] = 0; const cvs = document.getElementById("candles"); if (cvs) { cvs._st = { off: 0 }; cvs._lastC = null; }
+        S.tf[mint] = b.dataset.tf; S.chartOff[mint] = 0; const cvs = document.getElementById("candles");
+        if (cvs) { cvs._st = Object.assign(cvs._st || {}, { off: 0 }); cvs._lastC = null; }
         render(); });
     } };
   }
@@ -816,6 +906,21 @@
             <button type="button" data-mc="1" class="${mcMode() ? "on" : ""}" aria-pressed="${mcMode()}">Market cap</button>
           </div>
         </div>
+        <div class="setrow" id="themepref">
+          <div class="sl"><span>App colors</span></div>
+          <div class="s wrap">Background and accent for the whole app. Profit and loss stay green and red.</div>
+          <div class="swatches" id="themes" role="group" aria-label="App colors">${Object.entries(THEMES).map(([id, th]) =>
+            `<button type="button" class="swatch${themeId() === id ? " on" : ""}" data-theme="${id}" aria-pressed="${themeId() === id}" aria-label="${esc(th.label)}"><i class="swbg" style="background:${th.bg}"><b style="background:${th.accent}"></b></i><span>${esc(th.label)}</span></button>`).join("")}</div>
+        </div>
+        <div class="setrow" id="candlepref">
+          <div class="sl"><span>Candlestick colors</span></div>
+          <div class="s wrap">Up and down candles, and the volume bars under them, on the coin chart.</div>
+          <div class="swatches" id="candlesel" role="group" aria-label="Candlestick colors">${Object.entries(CANDLES).map(([id, ch]) => {
+            const up = id === "classic" ? THEMES[themeId()].green : (ch.up === "text" ? THEMES[themeId()].text : ch.up);
+            const down = id === "classic" ? THEMES[themeId()].red : ch.down;
+            return `<button type="button" class="swatch${candleId() === id ? " on" : ""}" data-candle="${id}" aria-pressed="${candleId() === id}" aria-label="${esc(ch.label)}"><i class="csticks"><b style="background:${up}"></b><b style="background:${down}"></b></i><span>${esc(ch.label)}</span></button>`;
+          }).join("")}</div>
+        </div>
       </div>
       <div class="grp">Notifications</div>
       <div class="list">
@@ -827,6 +932,8 @@
       ${groups}`;
     return { html: html.replace('class="row-in"', 'style="display:flex;flex:1;align-items:center;gap:12px"'), after() {
       document.querySelectorAll("#mcseg [data-mc]").forEach(b => b.onclick = e => { e.preventDefault(); applyMcMode(b.dataset.mc === "1"); });
+      document.querySelectorAll("#themes [data-theme]").forEach(b => b.onclick = e => { e.preventDefault(); setTheme(b.dataset.theme); });
+      document.querySelectorAll("#candlesel [data-candle]").forEach(b => b.onclick = e => { e.preventDefault(); setCandles(b.dataset.candle); });
       const inv = document.getElementById("invite");
       if (inv) inv.onclick = async () => {
         const url = a.signup_url;
@@ -887,7 +994,7 @@
   });
   let rz; window.addEventListener("resize", () => { clearTimeout(rz); rz = setTimeout(render, 150); });
 
-  if ("serviceWorker" in navigator && !LOCAL) navigator.serviceWorker.register("sw.js?v=15", { updateViaCache: "none" }).catch(() => {});
+  if ("serviceWorker" in navigator && !LOCAL) navigator.serviceWorker.register("sw.js?v=16", { updateViaCache: "none" }).catch(() => {});
   render();
   if (BASE) poll();
   window.desk = { S, render };
