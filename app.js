@@ -770,6 +770,15 @@
     } };
   }
   function openPositions() {
+    // Prefer the books (state.open_positions). The activity feed only keeps the newest ~30 rows
+    // on Home, so a hold from an earlier night would otherwise vanish from the list.
+    if (S.state && Array.isArray(S.state.open_positions)) {
+      return S.state.open_positions.map(r => ({
+        row: { mint: r.mint, title: "Bought " + (r.name || r.mint), logo: r.logo,
+               value: r.sizeUsd != null ? money(r.sizeUsd) : "", hold: !!r.hold },
+        coin: S.coin[r.mint]
+      }));
+    }
     const rows = S.activity.flatMap(p => p.rows || []), latest = new Map();
     rows.forEach(r => { if (r.mint && ["bought", "sold", "stopped"].includes(r.kind) && !latest.has(r.mint)) latest.set(r.mint, r); });
     return [...latest.values()].filter(r => r.kind === "bought").map(r => ({ row: r, coin: S.coin[r.mint] }));
@@ -780,7 +789,8 @@
     const sub = p ? (m && m.now != null ? money(p.sizeUsd) + " in → " + money(m.now) : money(p.sizeUsd) + " in")
       : esc(r.value || r.subtitle || "");
     const pct = m && m.pct;
-    return `<a class="row" href="${coinHref(r.mint)}">${logo(name, r.logo || (c && c.logo), 40)}<span class="main"><div class="t">${esc(name)}</div>
+    const held = (p && p.hold) || r.hold;
+    return `<a class="row" href="${coinHref(r.mint)}">${logo(name, r.logo || (c && c.logo), 40)}<span class="main"><div class="t">${esc(name)}${held ? ' <span class="pill paper">HOLD</span>' : ""}</div>
       <div class="s">${sub}</div></span>
       <span class="v">${pct == null ? '<span class="ter">—</span>' : `<span class="cpill ${pct >= 0 ? "up" : "down"}">${sgn(pct, 1)}</span>`}</span></a>`;
   }
@@ -798,6 +808,7 @@
     const m = new Map();
     const add = (mint, name) => { if (mint && !m.has(mint)) m.set(mint, name || mint); else if (mint && name && m.get(mint) === mint) m.set(mint, name); };
     (S.state ? S.state.coins : []).forEach(x => add(x));
+    (S.state && S.state.open_positions || []).forEach(p => add(p.mint, p.name));
     S.activity.forEach(p => (p.rows || []).forEach(r => add(r.mint, (r.title || "").replace(/^(Bought|Sold|Stopped|Rejected) /, ""))));
     const sc = card("scanner"); (sc && sc.feed || []).forEach(f => add(f.mint, f.name));
     return m;
@@ -1300,8 +1311,8 @@
           })()}</div>
         </div>
         <div class="setrow" id="appver">
-          <div class="sl"><span>App version</span><span class="val">v25</span></div>
-          <div class="s wrap">If this isn’t v25, the phone is still on an old copy. Close the app from the app switcher and reopen it.</div>
+          <div class="sl"><span>App version</span><span class="val">v26</span></div>
+          <div class="s wrap">If this isn’t v26, the phone is still on an old copy. Close the app from the app switcher and reopen it.</div>
         </div>
       </div>
       <div class="grp">Notifications</div>
