@@ -1608,7 +1608,7 @@
     const solPts = (name) => ((ch.ranges && ch.ranges[name]) || {}).points_sol || [];
     const hasUsd = ["LIVE","1H","4H","1D","1W","ALL"].some(n => usdPts(n).length);
     const hasSol = ["LIVE","1H","4H","1D","1W","ALL"].some(n => solPts(n).length);
-    if (!S.botUnit) S.botUnit = hasUsd ? "usd" : "sol";
+    if (!S.botUnit) S.botUnit = (usdPts("ALL").length >= 2 && usdPts("ALL").length >= solPts("ALL").length) ? "usd" : "sol";
     if (S.botUnit === "usd" && !hasUsd && hasSol) S.botUnit = "sol";
     const unit = S.botUnit === "usd" ? "usd" : "sol";
     const botRange = S.botRange || "LIVE";
