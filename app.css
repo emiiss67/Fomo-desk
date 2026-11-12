@@ -1124,3 +1124,28 @@ html[data-theme="daylight"] .cd.up .dv,html[data-theme="daylight"] .cd.dn .dv{co
 .mbtn.danger{background:rgba(255,69,58,.18);color:var(--red)}
 .addr{font-family:var(--mono);font-size:13px;word-break:break-all;color:var(--sec)}
 .tab span{font-size:9.5px}
+
+/* v32: Home book switch (LIVE / PAPER shadow / Misses) */
+.bookseg{padding:8px var(--s2) 0;gap:6px;justify-content:flex-start;flex-wrap:wrap}
+.bookseg button{flex:1 1 auto;min-width:0;padding:0 10px}
+.hero .misslist{margin:12px var(--s2) 0;max-height:none;overflow:visible}
+.hero .misslist .row .s.wrap{white-space:normal}
+
+/* v32: stop the Bot tab (and the rest of the shell) from dragging sideways on iPhone */
+html,body{overflow-x:hidden;max-width:100%}
+.view,.view.bottab{overflow-x:hidden;max-width:100%;width:100%}
+.hero,.card,.list,.chartwrap,canvas,.ranges,.today,.bigrow,.big,.kv{max-width:100%}
+.today{flex-wrap:wrap;row-gap:4px}
+.big,.bigrow{overflow-wrap:anywhere;min-width:0}
+.chartwrap{overflow:hidden}
+.kv{gap:12px;min-width:0}
+.kv>span{min-width:0;max-width:100%;overflow-wrap:anywhere}
+.addr{overflow-wrap:anywhere;word-break:break-all;max-width:100%}
+.addr.inline{display:inline;font-size:inherit}
+.botbtns{max-width:100%}
+.botbtns .mbtn{min-width:0;max-width:100%;box-sizing:border-box}
+.botrowbtns{margin-top:8px}
+.botrowbtns .mbtn{flex:1 1 calc(50% - 8px);height:36px;border-radius:12px;display:inline-flex;align-items:center;justify-content:center;font-weight:700;font-size:14px;background:var(--card2);color:var(--text);text-decoration:none}
+.s.wrap{overflow-wrap:anywhere;word-break:break-word;white-space:normal;max-width:100%}
+.tablewrap,table{display:block;max-width:100%;overflow-x:auto;-webkit-overflow-scrolling:touch}
+.view.bottab .list,.view.bottab .card{overflow-x:hidden;max-width:100%}

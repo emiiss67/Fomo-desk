@@ -36,7 +36,7 @@
 
   const S = { tf: {}, chartOff: {}, chartSlot: 9, state: null, chart: null, account: null, activity: [], coin: {}, audit: {}, decisions: {},
               reports: null, report: {}, missing: {}, err: false, lastGood: null, next: 0, range: "LIVE", search: "", showSearch: false,
-              tpDraft: {}, tpPart: {} };
+              tpDraft: {}, tpPart: {}, book: null };
   const view = document.getElementById("view"), offline = document.getElementById("offline");
   let chartPrev = null, odoPrev = null, beam = {}, execAnim = null;
 
@@ -341,6 +341,25 @@
   const safeUrl = u => { try { const x = new URL(u); return x.protocol === "https:" ? u : null; } catch (e) { return null; } };
   const ext = (u, inner, cls) => { const s = safeUrl(u); return s ? `<a class="${cls || ""}" href="${esc(s)}" target="_blank" rel="noopener">${inner}</a>` : inner; };
   const money = v => v == null ? "—" : (v < 0 ? "-" : "") + "$" + Math.abs(v).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  const shortAddr = a => { a = a == null ? "" : String(a); return a.length <= 12 ? a : a.slice(0, 4) + "…" + a.slice(-4); };
+  function activeBook() {
+    if (S.book === "misses" || S.book === "LIVE" || S.book === "PAPER") return S.book;
+    return (S.state && S.state.mode === "LIVE") ? "LIVE" : "PAPER";
+  }
+  function bookSnap() {
+    const book = activeBook();
+    if (book === "misses") return null;
+    const st = S.state || {};
+    if (st.books && st.books[book]) return st.books[book];
+    if (book === (st.paper ? "PAPER" : "LIVE")) return st;
+    return null;
+  }
+  function bookChart() {
+    const book = activeBook(), ch = S.chart || {};
+    if (ch.books && ch.books[book]) return ch.books[book];
+    if (book === ((S.state && S.state.paper) ? "PAPER" : "LIVE")) return ch;
+    return { ranges: {}, start_value: null };
+  }
   // 2026-11-11 half-manual desk: Sell / Take profit open the desk bot in Telegram with a /start payload.
   // The app holds no key or token: the bot only obeys the owner's own chat, and a full sell needs a Confirm tap there.
   const DESK_BOT = "https://t.me/Tradingaibotgrok_bot?start=";
@@ -776,22 +795,37 @@
 
   function home() {
     if (!S.state) return loadingHome();
-    const st = S.state, bal = st.balance;
-    const odo = odometer(money(bal));
-    const today = st.today_pct, mult = st.multiplier;
-    const rng = (S.chart && S.chart.ranges[S.range]) || { points: [], marks: [] };
+    const st = S.state, book = activeBook(), missesOn = book === "misses", bk = bookSnap() || {};
+    const bal = missesOn ? (st.misses || []).length : (bk.balance != null ? bk.balance : st.balance);
+    const odo = missesOn ? { html: esc(String(bal)), roll: false } : odometer(money(bal));
+    const today = missesOn ? null : (bk.today_pct != null || (bk.balance != null) ? bk.today_pct : st.today_pct);
+    const mult = missesOn ? null : (bk.multiplier != null || (bk.balance != null) ? bk.multiplier : st.multiplier);
+    const unpriced = missesOn ? 0 : (bk.balance_unpriced_positions != null ? bk.balance_unpriced_positions : st.balance_unpriced_positions);
+    const ch = bookChart();
+    const rng = (ch && ch.ranges && ch.ranges[S.range]) || { points: [], marks: [] };
+    const paperLabel = st.mode === "LIVE" ? "PAPER shadow" : "PAPER";
+    const heroLabel = missesOn ? "Misses tonight" : (book === "LIVE" ? "LIVE stack" : (st.mode === "LIVE" ? "PAPER shadow stack" : "PAPER stack"));
+    const bookseg = `<div class="ranges bookseg" role="tablist" aria-label="Book">${[["LIVE","LIVE"],["PAPER",paperLabel],["misses","Misses"]].map(([id, label]) =>
+      `<button type="button" data-book="${id}" class="${id === book ? "on" : ""}">${esc(label)}</button>`).join("")}</div>`;
+    const missRows = (st.misses || []).map(missRow).join("");
     const rows = ((S.activity[0] && S.activity[0].rows) || []).slice(0, 5);
     const results = S.showSearch ? searchResults() : "";
+    const heroBody = missesOn
+      ? `<div class="bigrow"><span class="big glow" aria-label="${esc(String(bal))}">${odo.html}</span></div>
+         <div class="today"><span class="sec">passed coins not taken on LIVE</span></div>
+         <div class="list misslist">${missRows || '<div class="empty">no data yet</div>'}</div>`
+      : `<div class="bigrow"><span class="big odo glow" aria-label="${esc(money(bal))}">${odo.html}</span></div>
+         <div class="today"><span class="${today == null ? "sec" : today >= 0 ? "green" : "red"}">${today == null ? "—" : sgn(today)}</span><span class="sec">today</span>
+         ${mult != null ? `<span class="pill mult">${Number(mult).toFixed(2)}×</span>` : ""}${unpriced ? `<span class="ter">${unpriced} position${unpriced > 1 ? "s" : ""} not priced yet</span>` : ""}</div>
+        <div class="chartwrap"><canvas id="line"></canvas>${rng.points.length ? "" : `<div class="chartempty">${book === "LIVE" && st.paper ? "no LIVE data yet" : "Waiting for the first trade"}</div>`}</div>
+        <div class="ranges">${["LIVE", "1H", "4H", "1D", "1W", "ALL"].map(r => `<button data-range="${r}" class="${r === S.range ? "on" : ""}">${r}</button>`).join("")}</div>`;
     const html = navbar(S.showSearch ? `<div class="search"><input id="q" type="search" placeholder="Name, symbol or mint" value="${esc(S.search)}" autocomplete="off" autocapitalize="off"></div><div class="results">${results}</div>` : "") +
-      `<section class="hero glass"><div class="herotop"><span class="ter">${st.paper ? "PAPER stack" : "Stack"}</span>${st.paper ? '<span class="pill paper">PAPER</span>' : ""}</div>
-       <div class="bigrow"><span class="big odo glow" aria-label="${esc(money(bal))}">${odo.html}</span></div>
-       <div class="today"><span class="${today == null ? "sec" : today >= 0 ? "green" : "red"}">${today == null ? "—" : sgn(today)}</span><span class="sec">today</span>
-       ${mult != null ? `<span class="pill mult">${mult.toFixed(2)}×</span>` : ""}${st.balance_unpriced_positions ? `<span class="ter">${st.balance_unpriced_positions} position${st.balance_unpriced_positions > 1 ? "s" : ""} not priced yet</span>` : ""}</div>
-      <div class="chartwrap"><canvas id="line"></canvas>${rng.points.length ? "" : '<div class="chartempty">Waiting for the first trade</div>'}</div>
-      <div class="ranges">${["LIVE", "1H", "4H", "1D", "1W", "ALL"].map(r => `<button data-range="${r}" class="${r === S.range ? "on" : ""}">${r}</button>`).join("")}</div>
+      `<section class="hero glass"><div class="herotop"><span class="ter">${esc(heroLabel)}</span>${book === "PAPER" ? '<span class="pill paper">PAPER</span>' : book === "LIVE" ? '<span class="pill redp">LIVE</span>' : ""}</div>
+       ${bookseg}
+       ${heroBody}
       <div class="achips">${st.agents.map(a => `<a class="achip" href="#/agents"><i class="live ${esc(a.paused ? "paused" : a.status)}"></i>${TITLE[a.name]}</a>`).join("")}</div></section>
-      <div class="sh"><h2>Open positions</h2><span class="ter sm">${openPositions().length || ""}</span></div>
-      <div class="list glass">${openPositions().length ? openPositions().map(posRow).join("") : '<div class="empty">No open positions</div>'}</div>
+      ${missesOn ? "" : `<div class="sh"><h2>Open positions</h2><span class="ter sm">${openPositions().length || ""}</span></div>
+      <div class="list glass">${openPositions().length ? openPositions().map(posRow).join("") : '<div class="empty">No open positions</div>'}</div>`}
       <div class="sh"><h2>Agents · ${st.running} running</h2></div>
       <div class="carousel">${st.agents.map(agentCard).join("")}</div>
       <div class="sh"><h2>New coins</h2><span class="ter sm">${(st.new_coins || []).length ? "live" : ""}${(st.new_coins || []).length ? '<i class="live running" style="margin-left:6px"></i>' : ""}</span></div>
@@ -803,15 +837,36 @@
     return { html, after() {
       if (odo.roll) runOdometer();
       const line = document.getElementById("line");
-      chartPrev = DeskChart.line(line, { points: rng.points, marks: enrichMarks(rng.marks), start: S.chart && S.chart.start_value, onMarks: items => paintChartMarks(line, items) }, chartPrev);
+      if (line && window.DeskChart) {
+        const start = (ch && ch.start_value != null) ? ch.start_value : (S.chart && S.chart.start_value);
+        chartPrev = DeskChart.line(line, { points: rng.points, marks: enrichMarks(rng.marks), start, onMarks: items => paintChartMarks(line, items) }, chartPrev);
+      }
       afterCards();
     } };
   }
+  function missRow(m) {
+    const after = m.afterwardsPct, paper = m.paper;
+    let paperTxt = "no PAPER fill";
+    if (paper) {
+      const pnl = paper.pnlUsd;
+      paperTxt = "PAPER " + (paper.status || (paper.closed ? "closed" : "open"))
+        + (paper.sizeUsd != null ? " " + money(paper.sizeUsd) : "")
+        + (pnl == null ? "" : " · " + money(pnl));
+    }
+    const reason = m.reason || m.status || "missed";
+    return `<a class="row" href="${coinHref(m.mint)}">${logo(m.name || m.mint, m.logo, 40)}<span class="main"><div class="t">${esc(m.name || m.mint)}</div>
+      <div class="s wrap">${esc(reason)} · signal ${m.signalPrice == null ? "—" : nat(m.signalPrice)} → now ${m.priceNow == null ? "—" : nat(m.priceNow)} · ${esc(paperTxt)}</div></span>
+      <span class="v">${after == null ? '<span class="ter">—</span>' : `<span class="cpill ${after >= 0 ? "up" : "down"}">${sgn(after, 1)}</span>`}</span></a>`;
+  }
   function openPositions() {
-    // Prefer the books (state.open_positions). The activity feed only keeps the newest ~30 rows
-    // on Home, so a hold from an earlier night would otherwise vanish from the list.
-    if (S.state && Array.isArray(S.state.open_positions)) {
-      return S.state.open_positions.map(r => ({
+    // Prefer the selected book's positions (state.books[book].open_positions). The activity feed
+    // only keeps the newest ~30 rows on Home, so a hold from an earlier night would otherwise vanish.
+    const book = activeBook();
+    const fromBook = S.state && S.state.books && S.state.books[book] && Array.isArray(S.state.books[book].open_positions)
+      ? S.state.books[book].open_positions
+      : (S.state && Array.isArray(S.state.open_positions) && book === ((S.state.paper) ? "PAPER" : "LIVE") ? S.state.open_positions : null);
+    if (fromBook) {
+      return fromBook.map(r => ({
         row: { mint: r.mint, title: "Bought " + (r.name || r.mint), logo: r.logo,
                value: r.sizeUsd != null ? money(r.sizeUsd) : "", hold: !!r.hold, tpPct: r.tpPct, tpPart: r.tpPart },
         coin: S.coin[r.mint]
@@ -1382,8 +1437,8 @@
           })()}</div>
         </div>
         <div class="setrow" id="appver">
-          <div class="sl"><span>App version</span><span class="val">v31</span></div>
-          <div class="s wrap">If this isn’t v31, the phone is still on an old copy. Close the app from the app switcher and reopen it.</div>
+          <div class="sl"><span>App version</span><span class="val">v32</span></div>
+          <div class="s wrap">If this isn’t v32, the phone is still on an old copy. Close the app from the app switcher and reopen it.</div>
         </div>
       </div>
       <div class="grp">Notifications</div>
@@ -1612,7 +1667,7 @@
     } };
   }
 
-  // ---------- v31 Bot tab: the auto-trading bot's own book (bot.json, read-only; actions = Telegram deep links) ----------
+  // ---------- v32 Bot tab: the auto-trading bot's own book (bot.json, read-only; actions = Telegram deep links) ----------
   let botChartPrev = null;
   function botTab() {
     const b = S.bot;
@@ -1645,10 +1700,10 @@
     const d = b.day || {}, lim = b.limits || {};
     const mode = b.mode === "LIVE" ? '<span class="pill redp">LIVE · real SOL</span>' : '<span class="pill paper">DRY · quotes only</span>';
     const onp = b.enabled ? '<span class="pill greenp">ON</span>' : '<span class="pill">OFF</span>';
-    const pos = (b.positions || []).map(p => `<div class="row"><span class="main"><div class="t">${esc(p.name || p.mint.slice(0, 6))} <span class="ter">#${esc(p.id)}</span></div>
-        <div class="s">${esc(sol(p.size_sol))} in · now ${esc(sol(p.value_sol))}${p.status !== "open" ? " · " + esc(p.status) : ""}${p.tp_pct != null ? " · TP +" + esc(p.tp_pct) + "%" : ""}</div></span>
-        <span class="v"><div class="${cls(p.pnl_pct)}">${esc(pctS(p.pnl_pct))}</div><div class="s ${cls(p.pnl_sol)}">${esc(solS(p.pnl_sol))}</div>
-        <div class="botbtns" style="margin-top:6px">${btn("botsell_" + p.id, "Sell")}${btn("botsellhalf_" + p.id, "Half")}</div></span></div>`).join("");
+    const pos = (b.positions || []).map(p => `<div class="row"><span class="main"><div class="t">${esc(p.name || (p.mint || "").slice(0, 6))} <span class="ter">#${esc(p.id)}</span></div>
+        <div class="s">${esc(sol(p.size_sol))} in · now ${esc(sol(p.value_sol))}${p.status !== "open" ? " · " + esc(p.status) : ""}${p.tp_pct != null ? " · TP +" + esc(p.tp_pct) + "%" : ""}</div>
+        <div class="botbtns botrowbtns">${btn("botsell_" + p.id, "Sell")}${btn("botsellhalf_" + p.id, "Half")}</div></span>
+        <span class="v"><div class="${cls(p.pnl_pct)}">${esc(pctS(p.pnl_pct))}</div><div class="s ${cls(p.pnl_sol)}">${esc(solS(p.pnl_sol))}</div></span></div>`).join("");
     const trades = (b.trades || []).map(t => `<div class="row"><span class="main"><div class="t">${esc(t.side === "buy" ? "Bought" : "Sold")} ${esc(t.name || (t.mint || "").slice(0, 6))}</div>
         <div class="s wrap">${esc(vilnius(t.ts ? new Date(t.ts * 1000).toISOString() : null))} · ${esc(t.mode)} · ${esc(t.reason || "")}${t.error ? " · " + esc(t.error) : ""}</div></span>
         <span class="v"><div>${esc(sol(t.sol))}</div><div class="s ${t.status === "failed" ? "red" : ""}">${esc(t.status)}${t.sig && safeUrl("https://solscan.io/tx/" + t.sig) ? ` · ${ext("https://solscan.io/tx/" + t.sig, "tx")}` : ""}</div></span></div>`).join("");
@@ -1670,9 +1725,9 @@
         ${kv("Per trade", "up to " + esc(lim.max_trade_pct) + "% · " + esc(lim.reserve_sol) + " SOL kept for fees")}
         <div class="botbtns">${b.enabled ? btn("bot_off", "Turn off") : btn("bot_on", "Turn on")}${b.mode === "LIVE" ? btn("bot_dry", "Back to DRY") : ""}${btn("bot", "Status")}${btn("bot_pnl", "PnL")}${btn("bot_withdraw", "Withdraw")}${btn("bot_kill", "Kill · sell all", "danger")}</div>
         ${b.mode === "DRY" ? '<div class="s wrap ter" style="margin-top:8px">Real trades: type BOT LIVE (capitals) in the desk bot.</div>' : ""}</div>
-      <div class="card"><h3>Wallet</h3><div class="addr" id="botaddr">${esc(b.address || "not created")}</div>
+      <div class="card"><h3>Wallet</h3><div class="addr" id="botaddr" title="${esc(b.address || "")}">${esc(b.address || "not created")}</div>
         ${b.address ? '<div class="botbtns"><button type="button" class="mbtn" id="botcopy">Copy address</button>' + ext("https://solscan.io/account/" + b.address, "Solscan", "mbtn") + "</div>" : ""}
-        <div class="s wrap ter" style="margin-top:8px">Send SOL (Solana network) to this address to fund the bot. Only send what you can lose. Withdraw opens Telegram and sends only to your Phantom${b.owner_address ? " " + esc(b.owner_address) : ""}; the destination cannot be changed.</div></div>
+        <div class="s wrap ter" style="margin-top:8px">Send SOL (Solana network) to this address to fund the bot. Only send what you can lose. Withdraw opens Telegram and sends only to your Phantom${b.owner_address ? " <span class=\"addr inline\">" + esc(shortAddr(b.owner_address)) + "</span>" : ""}; the destination cannot be changed.</div></div>
       <div class="sh"><h2>Open positions</h2></div><div class="list">${pos || '<div class="empty">No open bot coins</div>'}</div>
       <div class="sh"><h2>Trades</h2></div><div class="list">${trades || '<div class="empty">No bot trades yet</div>'}</div>
       <div class="gut s ter" style="margin:14px 0 8px">Updated ${esc(agoS(b.updated_at))}</div>`;
@@ -1692,6 +1747,7 @@
     tickOffline();
     if (document.activeElement && document.activeElement.id === "tpin" && route().name === "coin") return;  // typing a TP
     const r = route();
+    view.classList.toggle("bottab", r.name === "bot");
     document.querySelectorAll(".tab").forEach(t => t.classList.toggle("on", t.dataset.tab === r.name || ((r.name === "coin" || r.name === "audit") && t.dataset.tab === "home") || (r.name === "report" && t.dataset.tab === "activity")));
     const tabs = [...document.querySelectorAll(".tab")], on = tabs.findIndex(t => t.classList.contains("on")), ind = document.getElementById("tabind");
     if (ind && on >= 0) ind.style.transform = `translateX(${on * 100}%)`;
@@ -1716,6 +1772,7 @@
     if (q) { q.oninput = () => { S.search = q.value; const pos = q.selectionStart; render(); const n = document.getElementById("q"); n.focus(); n.setSelectionRange(pos, pos); };
       if (refocus) q.focus(); }
     view.querySelectorAll("[data-range]").forEach(b => b.onclick = () => { S.range = b.dataset.range; chartPrev = null; render(); });
+    view.querySelectorAll("[data-book]").forEach(b => b.onclick = () => { S.book = b.dataset.book; chartPrev = null; render(); });
   }
   let navAnim = false;
   window.addEventListener("hashchange", async () => {
@@ -1728,7 +1785,7 @@
   if ("serviceWorker" in navigator && !LOCAL) {
     let swReload = false;
     navigator.serviceWorker.addEventListener("controllerchange", () => { if (swReload) return; swReload = true; location.reload(); });
-    navigator.serviceWorker.register("sw.js?v=29", { updateViaCache: "none" }).then(reg => { try { reg.update(); } catch (e) {} }).catch(() => {});
+    navigator.serviceWorker.register("sw.js?v=32", { updateViaCache: "none" }).then(reg => { try { reg.update(); } catch (e) {} }).catch(() => {});
   }
   render();
   if (BASE) poll();
