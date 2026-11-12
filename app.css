@@ -344,7 +344,7 @@ button.pricerow{font:inherit;color:inherit;background:none;border:0;padding:0;wi
 .spacer{height:calc(52px + 20px + 40px)}
 /* tab bar: frosted glass + sliding active indicator */
 .tabbar{background:rgba(10,12,16,.62);border-top:1px solid var(--hair)}
-.tabind{position:absolute;top:6px;left:0;width:25%;height:38px;pointer-events:none;transition:transform .45s cubic-bezier(.2,1.3,.4,1);will-change:transform}
+.tabind{position:absolute;top:6px;left:0;width:20%;height:38px;pointer-events:none;transition:transform .45s cubic-bezier(.2,1.3,.4,1);will-change:transform}
 .tabind::before{content:"";position:absolute;left:50%;top:0;width:56px;height:38px;margin-left:-28px;border-radius:19px;background:color-mix(in srgb,var(--accent) 16%,transparent);box-shadow:0 0 18px color-mix(in srgb,var(--accent) 20%,transparent)}
 .tab{position:relative;z-index:1}.tab.on{color:var(--accent)}
 .lg{box-shadow:0 0 0 1px var(--hair)}
@@ -1082,3 +1082,39 @@ html[data-ui="blotter"] .view{padding-top:calc(env(safe-area-inset-top) + 4px);p
 .manual .mbtn.ghost{background:var(--card2);color:var(--text)}
 .manual .mbtn.off{opacity:.4;pointer-events:none}
 .manual .s.wrap{white-space:normal;color:var(--sec);font-size:13px;margin-top:8px;line-height:1.35}
+
+/* v28 Desk tab: strategy cards, PnL calendar, journal, settings */
+.dseg{margin-top:6px}
+.stlist{display:flex;flex-direction:column;gap:10px}
+.stcard{background:var(--card);border-radius:14px;padding:14px;border:1px solid transparent}
+.stcard.on{border-color:color-mix(in srgb,var(--green) 55%,transparent);box-shadow:0 0 0 1px color-mix(in srgb,var(--green) 25%,transparent)}
+.stcard .sth{display:flex;justify-content:space-between;align-items:center;margin-bottom:4px}
+.stcard .stn{font-size:18px;font-weight:700}
+.stcard .mbtn{margin-top:10px;display:flex}
+.stv{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px}
+.chipv{font-size:12px;padding:4px 8px;border-radius:8px;background:var(--card2);color:var(--sec);font-variant-numeric:tabular-nums}
+.stv .pill{height:22px;font-size:12px}
+.calcard{background:var(--card);border-radius:16px;padding:12px}
+.calh{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:8px}
+.calt{text-align:center;flex:1}.calt .t{font-size:17px;font-weight:700}
+.calsum{font-size:20px;font-weight:700;font-variant-numeric:tabular-nums;margin-top:2px}
+.calnav{width:44px;height:44px;border-radius:22px;border:0;background:var(--card2);color:var(--text);font-size:24px;line-height:44px;padding:0;cursor:pointer}
+.calw,.calg{display:grid;grid-template-columns:repeat(7,1fr);gap:4px}
+.calw span{text-align:center;font-size:11px;color:var(--ter);padding-bottom:4px}
+.cd{aspect-ratio:1/1.1;border-radius:9px;background:var(--card2);border:0;padding:3px 2px;display:flex;flex-direction:column;align-items:center;justify-content:space-between;color:var(--sec);font:inherit;cursor:pointer;min-width:0}
+.cd.empty{background:none;cursor:default}
+.cd .dn1{font-size:11px;line-height:1.2}
+.cd .dv{font-size:11px;font-weight:700;font-variant-numeric:tabular-nums;color:var(--text);white-space:nowrap;overflow:hidden;max-width:100%}
+.cd.up .dv{color:#eafff1}.cd.dn .dv{color:#ffeceb}
+.cd.today{box-shadow:inset 0 0 0 1.5px var(--accent,var(--blue))}
+.cd.sel{outline:2px solid var(--text);outline-offset:-2px}
+.setcard{background:var(--card);border-radius:14px;padding:6px 14px}
+.setcard .kv{border-bottom:.5px solid var(--sep);gap:12px;padding:6px 0}
+.setcard .kv:last-child{border-bottom:0}
+.setcard .kv>span:last-child{text-align:right;font-variant-numeric:tabular-nums}
+.jrow .stv{margin-top:6px}
+html[data-theme="daylight"] .cd.up .dv,html[data-theme="daylight"] .cd.dn .dv{color:var(--text)}
+.mbtns{display:flex;gap:8px;flex-wrap:wrap}
+.stcard .mbtn,.mbtns .mbtn{flex:1;height:40px;border-radius:12px;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:15px;background:var(--green);color:var(--cta-text,#000);text-decoration:none;touch-action:manipulation;min-width:140px}
+.mbtns .mbtn.ghost{background:var(--card2);color:var(--text)}
+.gut.s,.stcard .s{color:var(--sec);font-size:13px;line-height:1.35;white-space:normal}
