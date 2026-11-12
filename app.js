@@ -738,8 +738,9 @@
   function enrichMarks(list) {
     return (list || []).map(m => {
       const kind = m.kind || (/^Bought /i.test(m.text || "") ? "bought" : (m.color === "red" ? "stopped" : "sold"));
-      const size = m.sizeUsd != null ? money(m.sizeUsd) : "";
-      const label = kind === "bought" ? (size ? "Buy " + size : "Buy") : (m.text || (kind === "stopped" ? "Stop" : "Sell"));
+      const size = m.sizeUsd != null ? money(m.sizeUsd) : (m.sizeSol != null && isFinite(m.sizeSol)
+        ? (Number(m.sizeSol).toFixed(4).replace(/0+$/, "").replace(/\.$/, "") + " SOL") : "");
+      const label = m.label || (kind === "bought" ? (size ? "Buy " + size : "Buy") : (m.text || (kind === "stopped" ? "Stop" : "Sell")));
       return { ...m, kind, label, name: markName({ ...m, kind }), logo: logoFor(m.mint) };
     });
   }
@@ -1364,8 +1365,8 @@
           })()}</div>
         </div>
         <div class="setrow" id="appver">
-          <div class="sl"><span>App version</span><span class="val">v30</span></div>
-          <div class="s wrap">If this isn’t v30, the phone is still on an old copy. Close the app from the app switcher and reopen it.</div>
+          <div class="sl"><span>App version</span><span class="val">v31</span></div>
+          <div class="s wrap">If this isn’t v31, the phone is still on an old copy. Close the app from the app switcher and reopen it.</div>
         </div>
       </div>
       <div class="grp">Notifications</div>
@@ -1594,13 +1595,34 @@
     } };
   }
 
-  // ---------- v30 Bot tab: the auto-trading bot's own book (bot.json, read-only; actions = Telegram deep links) ----------
+  // ---------- v31 Bot tab: the auto-trading bot's own book (bot.json, read-only; actions = Telegram deep links) ----------
+  let botChartPrev = null;
   function botTab() {
     const b = S.bot;
     if (!b) return navbar() + `<div class="gut" style="margin-top:12px">${S.botMissing ? '<div class="list"><div class="empty">The desk hasn’t published bot.json yet</div></div>' : sk(420, null, "border-radius:14px")}</div>`;
     const sol = v => v == null ? "—" : Number(v).toFixed(4) + " SOL";
     const solS = v => v == null ? "—" : (v >= 0 ? "+" : "") + Number(v).toFixed(4) + " SOL";
     const cls = v => v == null ? "" : v >= 0 ? "green" : "red";
+    const ch = b.chart || {};
+    const usdPts = (name) => ((ch.ranges && ch.ranges[name]) || {}).points_usd || [];
+    const solPts = (name) => ((ch.ranges && ch.ranges[name]) || {}).points_sol || [];
+    const hasUsd = ["LIVE","1H","4H","1D","1W","ALL"].some(n => usdPts(n).length);
+    const hasSol = ["LIVE","1H","4H","1D","1W","ALL"].some(n => solPts(n).length);
+    if (!S.botUnit) S.botUnit = hasUsd ? "usd" : "sol";
+    if (S.botUnit === "usd" && !hasUsd && hasSol) S.botUnit = "sol";
+    const unit = S.botUnit === "usd" ? "usd" : "sol";
+    const botRange = S.botRange || "LIVE";
+    const rng = (ch.ranges && ch.ranges[botRange]) || { points_sol: [], points_usd: [], marks: [] };
+    const points = unit === "usd" ? (rng.points_usd || []) : (rng.points_sol || []);
+    const start = unit === "usd" ? ch.start_usd : ch.start_sol;
+    const today = unit === "usd" ? ch.today_pct_usd : ch.today_pct_sol;
+    const mult = unit === "usd" ? ch.multiplier_usd : ch.multiplier_sol;
+    const headline = unit === "usd" ? (ch.value_usd != null ? money(ch.value_usd) : null)
+      : (ch.value_sol != null ? sol(ch.value_sol) : null);
+    const unitBtns = `<div class="ranges" style="margin-top:8px">${["sol","usd"].map(u => {
+      const on = u === unit, empty = u === "usd" ? !hasUsd : !hasSol;
+      return `<button type="button" data-botunit="${u}" class="${on ? "on" : ""}" ${empty && !on ? "disabled" : ""}>${u.toUpperCase()}</button>`;
+    }).join("")}</div>`;
     const kv = (k, v, c) => `<div class="kv"><span class="sec">${k}</span><span class="${c || ""}">${v}</span></div>`;
     const btn = (pl, label, extra) => { const l = tgLink(pl); return l ? `<a class="mbtn${extra ? " " + extra : ""}" href="${esc(l)}" target="_blank" rel="noopener">${esc(label)}</a>` : ""; };
     const d = b.day || {}, lim = b.limits || {};
@@ -1613,7 +1635,15 @@
     const trades = (b.trades || []).map(t => `<div class="row"><span class="main"><div class="t">${esc(t.side === "buy" ? "Bought" : "Sold")} ${esc(t.name || (t.mint || "").slice(0, 6))}</div>
         <div class="s wrap">${esc(vilnius(t.ts ? new Date(t.ts * 1000).toISOString() : null))} · ${esc(t.mode)} · ${esc(t.reason || "")}${t.error ? " · " + esc(t.error) : ""}</div></span>
         <span class="v"><div>${esc(sol(t.sol))}</div><div class="s ${t.status === "failed" ? "red" : ""}">${esc(t.status)}${t.sig && safeUrl("https://solscan.io/tx/" + t.sig) ? ` · ${ext("https://solscan.io/tx/" + t.sig, "tx")}` : ""}</div></span></div>`).join("");
-    const html = navbar() + `<div class="card"><h3>Auto-trading bot</h3>
+    const html = navbar() + `<section class="hero glass"><div class="herotop"><span class="ter">Bot wallet</span>${b.mode === "DRY" ? '<span class="pill paper">DRY</span>' : '<span class="pill redp">LIVE</span>'}${b.enabled ? '<span class="pill greenp">ON</span>' : '<span class="pill">OFF</span>'}</div>
+       <div class="bigrow"><span class="big glow">${headline != null ? esc(headline) : "—"}</span></div>
+       <div class="today"><span class="${today == null ? "sec" : today >= 0 ? "green" : "red"}">${today == null ? "—" : sgn(today)}</span><span class="sec">today</span>
+       ${mult != null ? `<span class="pill mult">${esc(String(mult))}×</span>` : ""}
+       <span class="sec">realized ${esc(solS(b.realized_today_sol))}</span></div>
+      <div class="chartwrap"><canvas id="botline"></canvas>${points.length ? "" : '<div class="chartempty">no data yet</div>'}</div>
+      <div class="ranges">${["LIVE", "1H", "4H", "1D", "1W", "ALL"].map(r => `<button type="button" data-botrange="${r}" class="${r === botRange ? "on" : ""}">${r}</button>`).join("")}</div>
+      ${unitBtns}</section>
+      <div class="card"><h3>Auto-trading bot</h3>
         <div class="kv"><span>${onp} ${mode}</span><span class="ter">${b.killing ? "killing…" : ""}</span></div>
         ${kv("Wallet SOL", esc(sol(b.sol_balance)))}
         ${b.mode === "DRY" ? kv("DRY book start", esc(sol(b.dry_start_sol))) : ""}
@@ -1632,6 +1662,12 @@
     return { html, after() {
       const c = document.getElementById("botcopy");
       if (c) c.onclick = async () => { try { await navigator.clipboard.writeText(b.address); toast("Address copied"); } catch (e) { toast(b.address); } };
+      const line = document.getElementById("botline");
+      if (line && window.DeskChart) {
+        botChartPrev = DeskChart.line(line, { points, marks: enrichMarks(rng.marks || []), start, onMarks: items => paintChartMarks(line, items) }, botChartPrev);
+      }
+      view.querySelectorAll("[data-botrange]").forEach(b => b.onclick = () => { S.botRange = b.dataset.botrange; botChartPrev = null; render(); });
+      view.querySelectorAll("[data-botunit]").forEach(b => b.onclick = () => { S.botUnit = b.dataset.botunit; botChartPrev = null; render(); });
     } };
   }
 
