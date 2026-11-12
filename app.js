@@ -41,6 +41,7 @@
   let chartPrev = null, odoPrev = null, beam = {}, execAnim = null;
 
   // ---------- appearance (device-only; theme + candle colors + chart zoom) ----------
+  try { S.deskTab = localStorage.getItem("desk.deskTab") || null; } catch (e) {}
   const THEMES = {
     midnight: { label: "Midnight", bg: "#05070a", text: "#f4f6f8", sec: "rgba(226,232,240,.62)", ter: "rgba(226,232,240,.34)",
       sep: "rgba(255,255,255,.07)", card: "rgba(22,26,32,.82)", card2: "rgba(255,255,255,.10)",
@@ -566,6 +567,9 @@
           need("reports/index.json") || S.reports == null
             ? get("reports/index.json").catch(e => { if (e.status) return S.reports || { reports: [] }; throw e; })
             : S.reports]);
+        if (first || need("desk.json") || !S.desk) {
+          try { S.desk = await get("desk.json"); S.deskMissing = false; } catch (e) { if (e.status) S.deskMissing = true; else throw e; }
+        }
         S.chart = chart; S.account = account;
         if (S.activity[0] !== act) S.activity = [act];
         S.reports = reps;
@@ -1357,8 +1361,8 @@
           })()}</div>
         </div>
         <div class="setrow" id="appver">
-          <div class="sl"><span>App version</span><span class="val">v27</span></div>
-          <div class="s wrap">If this isn’t v27, the phone is still on an old copy. Close the app from the app switcher and reopen it.</div>
+          <div class="sl"><span>App version</span><span class="val">v28</span></div>
+          <div class="s wrap">If this isn’t v28, the phone is still on an old copy. Close the app from the app switcher and reopen it.</div>
         </div>
       </div>
       <div class="grp">Notifications</div>
@@ -1441,6 +1445,152 @@
   }
 
   // ---------- render / routing ----------
+  // ---------- v28 Desk tab: Strategy · PnL calendar · Journal · Settings (desk.json, read-only) ----------
+  const MON = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+  const pctS = v => v == null ? "—" : (v >= 0 ? "+" : "") + Number(v).toFixed(1) + "%";
+  const agoS = iso => { if (!iso) return "never"; const s = Math.max(0, (Date.now() - Date.parse(iso)) / 1000);
+    return s < 120 ? Math.round(s) + "s ago" : s < 7200 ? Math.round(s / 60) + " min ago" : Math.floor(s / 3600) + "h " + Math.round(s % 3600 / 60) + "m ago"; };
+  const vilnius = iso => { if (!iso) return "—"; try { return new Date(iso).toLocaleString("en-GB", { timeZone: "Europe/Vilnius", day: "numeric", month: "short", hour: "2-digit", minute: "2-digit", hour12: false }); } catch (e) { return iso; } };
+  function deskSeg() {
+    const cur = S.deskTab || "strategy";
+    return `<div class="gut"><div class="seg wide dseg" id="dseg" role="tablist">${[["strategy","Strategy"],["pnl","PnL"],["journal","Journal"],["settings","Settings"]]
+      .map(([k, l]) => `<button type="button" data-dt="${k}" class="${cur === k ? "on" : ""}">${l}</button>`).join("")}</div></div>`;
+  }
+  function strategyView(d) {
+    const st = d.strategy || {}, v = st.values || {};
+    const fmtV = (k, x) => x == null ? "—" : k === "scanner.min_volume_h1_usd" ? "$" + Number(x).toLocaleString("en-US") + " 1h vol"
+      : k === "scanner.feed_max_room" ? x + " in room" : k === "executor.stack_pct" ? x + "% per coin"
+      : k === "scanner.newpairs_poll_s" ? "poll " + x + "s" : (x ? "pairs < " + x + " min" : "any pair age");
+    const card = p => {
+      const on = st.active === p.name, link = tgLink("strategy_" + p.name);
+      return `<div class="stcard${on ? " on" : ""}"><div class="sth"><span class="stn">${esc(p.label)}</span>${on ? '<span class="pill greenp">Active</span>' : ""}</div>
+        <div class="s wrap">${esc(p.blurb)}</div>
+        <div class="stv">${Object.entries(p.values).map(([k, x]) => `<span class="chipv">${esc(fmtV(k, x))}</span>`).join("")}</div>
+        ${on ? "" : link ? `<a class="mbtn" href="${esc(link)}" target="_blank" rel="noopener">Switch to ${esc(p.label)}</a>` : ""}</div>`;
+    };
+    const ls = st.last_switch;
+    return `<div class="sh"><h2>Strategy</h2><span class="sec">${esc(st.label || "—")}</span></div>
+      <div class="gut stlist">${(st.presets || []).map(card).join("")}</div>
+      <div class="list"><div class="row"><span class="main"><div class="t">Now</div><div class="s wrap">${Object.entries(v).map(([k, x]) => esc(fmtV(k, x))).join(" · ")}</div></span></div>
+      ${ls ? `<div class="row"><span class="main"><div class="t">Last switch</div><div class="s">${esc(ls.old || "?")} → ${esc(ls.new)} · ${esc(vilnius(ls.ts))} (Europe/Vilnius)</div></span></div>` : ""}</div>
+      <div class="gut s wrap" style="margin-top:10px">A switch opens the desk bot in Telegram: tap Start. Hard scam checks, the name blocklist, X check, socials and PAPER/LIVE never change with a strategy.</div>`;
+  }
+  function pnlView(d) {
+    const modes = Object.keys(d.pnl_days || {});
+    const mode = S.pnlMode && modes.includes(S.pnlMode) ? S.pnlMode : (modes.includes("LIVE") && d.mode === "LIVE" ? "LIVE" : modes[0] || "PAPER");
+    const days = (d.pnl_days || {})[mode] || [], by = {};
+    days.forEach(x => by[x.date] = x);
+    const today = new Date(), tz = new Date(today.toLocaleString("en-US", { timeZone: "Europe/Vilnius" }));
+    const ym = S.pnlMonth || `${tz.getFullYear()}-${String(tz.getMonth() + 1).padStart(2, "0")}`;
+    const [Y, M] = ym.split("-").map(Number);
+    const first = new Date(Date.UTC(Y, M - 1, 1)), nd = new Date(Date.UTC(Y, M, 0)).getUTCDate(), lead = (first.getUTCDay() + 6) % 7;
+    const monthRows = days.filter(x => x.date.startsWith(ym));
+    const mt = monthRows.reduce((a, x) => ({ pnl: a.pnl + x.pnl_usd, n: a.n + x.trades, w: a.w + x.wins, l: a.l + x.losses, inv: a.inv + (x.invested_usd || 0) }), { pnl: 0, n: 0, w: 0, l: 0, inv: 0 });
+    const maxAbs = Math.max(0.01, ...monthRows.map(x => Math.abs(x.pnl_usd)));
+    const todayKey = `${tz.getFullYear()}-${String(tz.getMonth() + 1).padStart(2, "0")}-${String(tz.getDate()).padStart(2, "0")}`;
+    let cells = "";
+    for (let i = 0; i < lead; i++) cells += `<div class="cd empty"></div>`;
+    for (let dd = 1; dd <= nd; dd++) {
+      const key = `${ym}-${String(dd).padStart(2, "0")}`, x = by[key];
+      const a = x ? Math.min(1, 0.25 + 0.75 * Math.abs(x.pnl_usd) / maxAbs) : 0;
+      const col = x ? (x.pnl_usd >= 0 ? `rgba(0,211,90,${a * 0.55})` : `rgba(255,69,58,${a * 0.55})`) : "";
+      cells += `<button type="button" class="cd${x ? (x.pnl_usd >= 0 ? " up" : " dn") : ""}${key === todayKey ? " today" : ""}${S.pnlDay === key ? " sel" : ""}" data-day="${key}" ${col ? `style="background:${col}"` : ""}>
+        <span class="dn1">${dd}</span>${x ? `<span class="dv">${x.pnl_usd >= 0 ? "+" : "-"}${Math.abs(x.pnl_usd) >= 10 ? Math.round(Math.abs(x.pnl_usd)) : Math.abs(x.pnl_usd).toFixed(1)}</span>` : ""}</button>`;
+    }
+    const prev = M === 1 ? `${Y - 1}-12` : `${Y}-${String(M - 1).padStart(2, "0")}`, next = M === 12 ? `${Y + 1}-01` : `${Y}-${String(M + 1).padStart(2, "0")}`;
+    const sel = S.pnlDay && by[S.pnlDay];
+    const dayRow = x => `<div class="row"><span class="main"><div class="t">${esc(reportDate(x.date))}</div>
+        <div class="s">${x.trades} trade${x.trades === 1 ? "" : "s"} · ${x.wins}W / ${x.losses}L · fees ${money(x.fees_usd)}</div></span>
+        <span class="v ${x.pnl_usd >= 0 ? "green" : "red"}">${moneyS(x.pnl_usd)}<div class="s ${x.pnl_usd >= 0 ? "green" : "red"}" style="text-align:right">${pctS(x.pct)}</div></span></div>`;
+    return `<div class="sh"><h2>PnL calendar</h2>${modes.length > 1 ? `<div class="seg" id="pmode">${modes.map(m => `<button type="button" data-pm="${m}" class="${m === mode ? "on" : ""}">${m}</button>`).join("")}</div>` : `<span class="pill ${mode === "PAPER" ? "paper" : "greenp"}">${mode}</span>`}</div>
+      <div class="gut"><div class="calcard">
+        <div class="calh"><button type="button" class="calnav" data-month="${prev}" aria-label="Previous month">‹</button>
+          <div class="calt"><div class="t">${MON[M - 1]} ${Y}</div><div class="calsum ${mt.pnl >= 0 ? "green" : "red"}">${mt.n ? moneyS(Math.round(mt.pnl * 100) / 100) + (mt.inv ? " · " + pctS(100 * mt.pnl / mt.inv) : "") : '<span class="ter">no closed trades</span>'}</div>
+          <div class="s">${mt.n} trades · ${mt.w}W / ${mt.l}L</div></div>
+          <button type="button" class="calnav" data-month="${next}" aria-label="Next month">›</button></div>
+        <div class="calw">${["M","T","W","T","F","S","S"].map(x => `<span>${x}</span>`).join("")}</div>
+        <div class="calg">${cells}</div></div></div>
+      ${sel ? `<div class="sh"><h2 style="font-size:17px">${esc(reportDate(sel.date))}</h2></div><div class="list">${dayRow(sel)}</div>` : ""}
+      <div class="sh"><h2>Daily PnL</h2><span class="sec">realized · ${mode}</span></div>
+      <div class="list">${days.length ? days.slice().reverse().slice(0, 31).map(dayRow).join("") : '<div class="empty">No closed trades yet</div>'}</div>
+      <div class="gut s wrap" style="margin-top:10px">Closed trades only, by Europe/Vilnius day, fees included. PAPER and LIVE are kept apart. Telegram: pnl today · pnl week · pnl month.</div>`;
+  }
+  function journalView(d) {
+    const ls = d.lessons, jr = d.journal || [];
+    const tagCls = t => /rugged|dumped|stop|gave back|quiet|loss|too early/.test(t) ? "redp" : "greenp";
+    const lesson = ls ? `<div class="list"><div class="row"><span class="main"><div class="t">Lessons · ${esc(ls.night || "")}</div><div class="s wrap">${esc(ls.summary || "")}</div>
+        ${ls.findings && ls.findings.tags ? `<div class="stv">${Object.entries(ls.findings.tags).slice(0, 6).map(([k, n]) => `<span class="pill ${tagCls(k)}">${esc(k)} ${n}</span>`).join("")}</div>` : ""}</span></div>
+        ${(ls.applied || []).map(a => `<div class="row"><span class="main"><div class="t">Adjusted ${esc(a.key)}</div><div class="s wrap">${esc(a.old)} → ${esc(a.new)} · ${esc(a.why)}</div></span></div>`).join("")}
+        ${(ls.proposals || []).map(p => `<div class="row"><span class="main"><div class="s wrap">💡 ${esc(p)}</div></span></div>`).join("")}
+        ${!(ls.applied || []).length ? `<div class="row"><span class="main"><div class="s">No automatic changes in the last run.</div></span></div>` : ""}</div>`
+      : `<div class="list"><div class="empty">First lessons after the next 08:00 night report</div></div>`;
+    const row = r => `<div class="row jrow"><span class="main"><div class="t">${r.mint ? `<a class="cl" href="${coinHref(r.mint)}">${esc(r.name || r.mint.slice(0, 4) + "…")}</a>` : esc(r.name || "—")} <span class="ter">· ${esc(r.mode)}</span></div>
+        <div class="s wrap">${esc(vilnius(r.closed_at))} · held ${r.hold_min == null ? "—" : Math.round(r.hold_min) + " min"} · ${esc(r.exit_reason || "")}${r.peak_pct != null ? " · peak " + pctS(r.peak_pct) : ""}</div>
+        <div class="s wrap ter">${esc(r.entry_reason || "")}${r.source ? " · " + esc(r.source) : ""}${r.chain ? " · " + esc(r.chain) : ""}</div>
+        <div class="stv">${(r.tags || []).map(t => `<span class="pill ${tagCls(t)}">${esc(t)}</span>`).join("")}</div></span>
+        <span class="v ${r.pnl_usd >= 0 ? "green" : "red"}">${moneyS(r.pnl_usd)}<div class="s ${r.pnl_usd >= 0 ? "green" : "red"}" style="text-align:right">${pctS(r.pnl_pct)}</div></span></div>`;
+    return `<div class="sh"><h2>What the desk learned</h2></div>${lesson}
+      <div class="sh"><h2>Journal</h2><span class="sec">${jr.length} trades</span></div>
+      <div class="list">${jr.length ? jr.map(row).join("") : '<div class="empty">No closed trades yet</div>'}</div>
+      <div class="gut s wrap" style="margin-top:10px">Only small, capped changes are automatic (analyst score weights, ±0.05 a night, 0.5–1.5). Scam checks, ticket size and PAPER/LIVE are never touched. Telegram: journal · lessons.</div>`;
+  }
+  function settingsView(d) {
+    const h = d.health || {}, st = d.settings || {}, g = d.live_gate || {}, wd = h.watchdog;
+    const kv2 = (k, v, cls) => `<div class="kv"><span class="sec">${k}</span><span class="${cls || ""}">${v}</span></div>`;
+    const hb = h.heartbeat_age_s || {};
+    const hbOk = h.heartbeats_fresh;
+    const w = st.weights || {};
+    return `<div class="sh"><h2>Desk</h2><span class="pill ${d.mode === "PAPER" ? "paper" : "greenp"}">${esc(d.mode)}</span></div>
+      <div class="gut"><div class="setcard">
+        ${kv2("Mode", esc(d.mode))}
+        ${kv2("Strategy", esc((d.strategy && d.strategy.label) || "—"))}
+        ${kv2("Buying", h.buying_paused ? "paused" : "on", h.buying_paused ? "red" : "green")}
+        ${kv2("Stack", money(st.stack) + " · " + esc(st.stack_pct) + "% per coin")}
+        ${kv2("Min ticket · LIVE stack", money(st.min_ticket_usd) + " · " + money(st.live_stack))}
+        ${kv2("LIVE gate", g.met ? `met · ${g.full_paper_nights} full PAPER night${g.full_paper_nights === 1 ? "" : "s"}` : "not met", g.met ? "green" : "red")}
+      </div></div>
+      <div class="sh"><h2>Health</h2><span class="${hbOk && h.service !== "inactive" ? "green" : "red"}">${hbOk ? "OK" : "check"}</span></div>
+      <div class="gut"><div class="setcard">
+        ${kv2("Service", esc(h.service || "n/a"))}
+        ${kv2("Up since", esc(h.service_since || "—"))}
+        ${kv2("Heartbeats", Object.entries(hb).map(([a, s]) => `<span class="${s != null && s <= 300 ? "green" : "red"}">${esc(a.slice(0, 3))} ${s == null ? "—" : s + "s"}</span>`).join(" "))}
+        ${kv2("Last scanner decision", esc(agoS(h.last_scan_ts)))}
+        ${kv2("Last executor signal", esc(agoS(h.last_signal_ts)) + (h.last_signal_status ? " · " + esc(h.last_signal_status) : ""))}
+        ${kv2("Last fill", esc(agoS(h.last_fill_ts)))}
+        ${kv2("WS reconnects · crashes (1h)", `${h.ws_reconnects_1h == null ? "n/a" : h.ws_reconnects_1h} · ${h.crashes_1h == null ? "n/a" : h.crashes_1h}`)}
+        ${kv2("Watchdog", wd ? (wd.ok ? "ok" : esc(wd.problem)) + " · " + esc(agoS(wd.last_check)) : "no check yet", wd && wd.ok ? "green" : "red")}
+        ${wd && wd.last_restart ? kv2("Last watchdog restart", esc(vilnius(wd.last_restart.ts)) + " · " + esc(wd.last_restart.reason)) : ""}
+        ${kv2("Last health check", esc(vilnius(h.time)))}
+      </div>
+      <div class="mbtns" style="margin-top:10px">${["health", "settings"].map(x => `<a class="mbtn ghost" href="${esc(tgLink(x))}" target="_blank" rel="noopener">${x === "health" ? "Health in Telegram" : "Settings in Telegram"}</a>`).join("")}</div></div>
+      <div class="sh"><h2>Key thresholds</h2></div>
+      <div class="gut"><div class="setcard">
+        ${kv2("1h volume ≥", money(st.min_volume_h1_usd))}
+        ${kv2("Liquidity ≥", money(st.min_liquidity_usd))}
+        ${kv2("Holders ≥ · MC ≥", esc(st.min_holders) + " · " + money(st.min_market_cap_usd))}
+        ${kv2("Feed room · new pairs", esc(st.feed_max_room) + " · " + esc(st.newpairs_poll_s) + "s" + (st.newpairs_max_age_min ? " · < " + esc(st.newpairs_max_age_min) + " min" : ""))}
+        ${kv2("Dev ≤ · top10 ≤ · LP locked ≥", `${esc(st.max_dev_pct)}% · ${esc(st.max_top10_pct)}% · ${esc(st.min_lp_locked_pct)}%`)}
+        ${kv2("X check · socials", (st.x_check ? "on" : "off") + " · " + (st.require_socials ? "required" : "optional"))}
+        ${kv2("Analyst score ≥", esc(st.min_score))}
+        ${kv2("Score weights", `alive ${esc(w.alive)} · organic ${esc(w.organic)} · flush ${esc(w.flush)} · chase ${esc(w.chase)}`)}
+        ${kv2("Stop · trail", `-${esc(st.stop_pct)}% · ${esc(st.trail_pct)}% from +${esc(st.trail_start_pct)}%`)}
+        ${kv2("Timeout", esc(st.timeout_h) + "h")}
+      </div></div>
+      <div class="gut s wrap" style="margin-top:10px">Read-only. Change by Telegram (set …, strategy …, pause, resume). LIVE needs you to type LIVE in capitals; LIVE only sends FOMO links, it never places orders.</div>`;
+  }
+  function deskTab() {
+    const d = S.desk;
+    if (!d) return navbar() + deskSeg() + `<div class="gut" style="margin-top:12px">${S.deskMissing ? '<div class="list"><div class="empty">The desk hasn’t published desk.json yet</div></div>' : sk(420, null, "border-radius:14px")}</div>`;
+    const t = S.deskTab || "strategy";
+    const body = t === "pnl" ? pnlView(d) : t === "journal" ? journalView(d) : t === "settings" ? settingsView(d) : strategyView(d);
+    return { html: navbar() + deskSeg() + body + `<div class="gut s ter" style="margin:14px 0 8px">Updated ${esc(agoS(d.updated_at))}</div>`, after() {
+      view.querySelectorAll("[data-dt]").forEach(b => b.onclick = () => { S.deskTab = b.dataset.dt; try { localStorage.setItem("desk.deskTab", S.deskTab); } catch (e) {} render(); });
+      view.querySelectorAll("[data-month]").forEach(b => b.onclick = () => { S.pnlMonth = b.dataset.month; S.pnlDay = null; render(); });
+      view.querySelectorAll("[data-day]").forEach(b => b.onclick = () => { S.pnlDay = S.pnlDay === b.dataset.day ? null : b.dataset.day; render(); });
+      view.querySelectorAll("[data-pm]").forEach(b => b.onclick = () => { S.pnlMode = b.dataset.pm; render(); });
+    } };
+  }
+
   function render() {
     tickOffline();
     if (document.activeElement && document.activeElement.id === "tpin" && route().name === "coin") return;  // typing a TP
@@ -1449,7 +1599,7 @@
     const tabs = [...document.querySelectorAll(".tab")], on = tabs.findIndex(t => t.classList.contains("on")), ind = document.getElementById("tabind");
     if (ind && on >= 0) ind.style.transform = `translateX(${on * 100}%)`;
     if (!BASE) { if (!document.getElementById("gb")) { view.innerHTML = gate(); bindGate(); } document.getElementById("tabbar").hidden = true; return; }
-    const out = r.name === "agents" ? agentsTab() : r.name === "activity" ? activityTab() : r.name === "account" ? accountTab()
+    const out = r.name === "desk" ? deskTab() : r.name === "agents" ? agentsTab() : r.name === "activity" ? activityTab() : r.name === "account" ? accountTab()
       : r.name === "coin" && r.arg ? coinScreen(decodeURIComponent(r.arg)) : r.name === "audit" ? auditScreen(r.arg && decodeURIComponent(r.arg))
       : r.name === "report" && r.arg ? reportScreen(decodeURIComponent(r.arg)) : home();
     const o = typeof out === "string" ? { html: out } : out;
@@ -1481,7 +1631,7 @@
   if ("serviceWorker" in navigator && !LOCAL) {
     let swReload = false;
     navigator.serviceWorker.addEventListener("controllerchange", () => { if (swReload) return; swReload = true; location.reload(); });
-    navigator.serviceWorker.register("sw.js?v=21", { updateViaCache: "none" }).then(reg => { try { reg.update(); } catch (e) {} }).catch(() => {});
+    navigator.serviceWorker.register("sw.js?v=28", { updateViaCache: "none" }).then(reg => { try { reg.update(); } catch (e) {} }).catch(() => {});
   }
   render();
   if (BASE) poll();
