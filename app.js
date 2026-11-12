@@ -6,7 +6,7 @@
   const LOCAL = ["localhost", "127.0.0.1"].includes(location.hostname);
   const QS = new URLSearchParams(location.search);
   const FIXTURE = LOCAL ? QS.get("fixture") : null;          // local screenshots only
-  const POLL_S = 5, MAX_BACKOFF = 60;
+  const POLL_VISIBLE_S = 2, POLL_HIDDEN_S = 15, POLL_S = POLL_VISIBLE_S, MAX_BACKOFF = 60;
   const AGENTS = ["scanner", "auditor", "analyst", "executor", "risk"];
   const TITLE = { scanner: "Scanner", auditor: "Auditor", analyst: "Analyst", executor: "Executor", risk: "Risk" };
   const COLOR = { scanner: "cyan", auditor: "", analyst: "yellow", executor: "green", risk: "pink" };
@@ -533,7 +533,10 @@
 
   // ---------- fetch ----------
   async function get(rel) {
-    const r = await fetch(BASE + rel + "?v=" + Date.now(), { cache: "no-store" });
+    const sep = rel.includes("?") ? "&" : "?";
+    const r = await fetch(BASE + rel + sep + "v=" + Date.now(), {
+      cache: "no-store", headers: { "Cache-Control": "no-cache", Pragma: "no-cache" }
+    });
     if (r.status !== 200) { const e = new Error("HTTP " + r.status); e.status = r.status; throw e; }
     return r.json();
   }
@@ -552,7 +555,18 @@
     if (r.name === "report" && r.arg && /^\d{4}-\d{2}-\d{2}$/.test(r.arg) && (ch(`reports/${r.arg}.json`) || !S.report[r.arg]))
       await getOpt(`reports/${r.arg}.json`, S.report, r.arg);
   }
+  function pollDelayS() { return document.hidden ? POLL_HIDDEN_S : POLL_VISIBLE_S; }
+  let pollTimer = null, pollInFlight = false, pollAgain = false;
+  function schedulePoll(ms) {
+    clearTimeout(pollTimer);
+    const delay = ms != null ? ms : pollDelayS() * 1000;
+    S.next = Date.now() + delay;
+    pollTimer = setTimeout(poll, delay);
+  }
+  function pollNow() { schedulePoll(0); }
   async function poll() {
+    if (pollInFlight) { pollAgain = true; return; }
+    pollInFlight = true;
     let changedSomething = false;
     try {
       const st = await get("state.json");
@@ -581,15 +595,18 @@
         await loadRoute(first ? null : changed);
       }
       if (S.err) changedSomething = true;
-      S.err = false; S.lastGood = new Date(); S.backoff = POLL_S;
+      S.err = false; S.lastGood = new Date(); S.backoff = pollDelayS();
     } catch (e) {
       if (!S.err) changedSomething = true;
-      S.err = true; S.backoff = Math.min((S.backoff || POLL_S) * 2, MAX_BACKOFF);
+      S.err = true; S.backoff = Math.min((S.backoff || pollDelayS()) * 2, MAX_BACKOFF);
     }
-    S.next = Date.now() + S.backoff * 1000;
     if (changedSomething) render();
-    setTimeout(poll, S.backoff * 1000);
+    pollInFlight = false;
+    if (pollAgain) { pollAgain = false; schedulePoll(0); }
+    else schedulePoll(S.err ? S.backoff * 1000 : pollDelayS() * 1000);
   }
+  document.addEventListener("visibilitychange", () => { if (!document.hidden) pollNow(); });
+  window.addEventListener("focus", () => pollNow());
   function tickOffline() {
     if (!S.err) { offline.hidden = true; return; }
     const n = Math.max(0, Math.ceil((S.next - Date.now()) / 1000));
