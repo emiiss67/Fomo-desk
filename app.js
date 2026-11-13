@@ -36,7 +36,7 @@
 
   const S = { tf: {}, chartOff: {}, chartSlot: 9, state: null, chart: null, account: null, activity: [], coin: {}, audit: {}, decisions: {},
               reports: null, report: {}, missing: {}, err: false, lastGood: null, next: 0, range: "LIVE", search: "", showSearch: false,
-              tpDraft: {}, tpPart: {}, book: null };
+              tpDraft: {}, tpPart: {}, slDraft: {}, slPart: {}, lineDraft: {}, book: null };
   const view = document.getElementById("view"), offline = document.getElementById("offline");
   let chartPrev = null, odoPrev = null, beam = {}, execAnim = null;
 
@@ -366,11 +366,68 @@
   const posId = id => Number.isInteger(id) && id > 0 ? id : null;
   const tgLink = payload => /^[A-Za-z0-9_-]{1,64}$/.test(payload) ? DESK_BOT + payload : null;
   const tpText = (pct, part) => pct == null ? null : "+" + (+pct).toLocaleString("en-US", { maximumFractionDigits: 2 }) + "% · sell " + (part === "half" ? "half" : "all");
-  function tpPayload(id, pct, part) {
+  function tpPayload(id, pct, part, prefix) {
     const v = Math.round(+pct * 10) / 10;
     if (!posId(id) || !isFinite(v) || v <= 0 || v > 100000) return null;
     const whole = Math.trunc(v), dec = Math.round((v - whole) * 10);
-    return `tp_${id}_${whole}${dec ? "p" + dec : ""}_${part === "half" ? "half" : "all"}`;
+    return `${prefix || "tp_"}${id}_${whole}${dec ? "p" + dec : ""}_${part === "half" ? "half" : "all"}`;
+  }
+  function slPayload(id, pct, part, prefix) {
+    const v = Math.round(+pct * 10) / 10;
+    if (!posId(id) || !isFinite(v) || v <= 0 || v >= 100) return null;
+    const whole = Math.trunc(v), dec = Math.round((v - whole) * 10);
+    return `${prefix || "sl_"}${id}_${whole}${dec ? "p" + dec : ""}_${part === "half" ? "half" : "all"}`;
+  }
+  const cssVar = (n, fb) => { try { const v = getComputedStyle(document.documentElement).getPropertyValue(n).trim(); return v || fb; } catch (e) { return fb; } };
+  function linePctTxt(kind, source, pct) {
+    const who = source === "you" ? "you" : "risk";
+    const n = pct == null || !isFinite(+pct) ? null : +pct;
+    if (kind === "tp") return "TP (" + who + ")" + (n == null ? "" : " +" + n.toFixed(Math.abs(n) >= 10 ? 0 : 1) + "%");
+    if (kind === "sl") return "SL (" + who + ")" + (n == null ? "" : " " + n.toFixed(Math.abs(n) >= 10 ? 0 : 1) + "%");
+    return kind;
+  }
+  function athFrom(c, list) {
+    const launchT = c && c.launched_at ? Date.parse(c.launched_at) / 1000 : null;
+    const first = list && list.length ? list[0].t : null;
+    let hi = null;
+    if (launchT && first != null && isFinite(first) && first <= launchT + 1800) {
+      const mx = Math.max(...list.map(x => x.h).filter(v => v != null && isFinite(v)));
+      if (isFinite(mx)) hi = mx;
+    }
+    if (c && c.ath != null && isFinite(+c.ath)) hi = hi == null ? +c.ath : Math.max(hi, +c.ath);
+    return hi;
+  }
+  function posChartLines(entry, snap, draft, ath, sc) {
+    const sx = v => (v == null || !isFinite(v)) ? null : (sc ? sc(v) : v);
+    const out = [];
+    if (entry != null && isFinite(entry)) out.push({ id: "entry", kind: "entry", price: sx(entry), label: "Entry", color: cssVar("--cyan", "#64d2ff"), drag: false });
+    if (ath != null && isFinite(ath)) out.push({ id: "ath", kind: "ath", price: sx(ath), label: "ATH", color: cssVar("--yellow", "#ffd60a"), drag: false, dash: true });
+    const riskSl = snap && snap.sl_risk_price;
+    const userSl = draft && draft.slPrice != null ? draft.slPrice : (snap && snap.sl_price);
+    const userSlPct = draft && draft.slPct != null ? draft.slPct : (snap && snap.sl_pct);
+    const riskPct = snap && snap.sl_risk_pct;
+    if (userSl != null && isFinite(userSl)) {
+      if (riskSl != null && isFinite(riskSl) && Math.abs(riskSl - userSl) / Math.max(Math.abs(riskSl), 1e-18) > 0.002)
+        out.push({ id: "sl-risk", kind: "sl", price: sx(riskSl), label: linePctTxt("sl", "risk", riskPct), color: cssVar("--red", "#ff453a"), drag: false, source: "risk", dash: true });
+      const pct = userSlPct != null ? -Math.abs(+userSlPct) : (entry ? 100 * (userSl / entry - 1) : null);
+      out.push({ id: "sl", kind: "sl", price: sx(userSl), label: linePctTxt("sl", "you", pct), color: cssVar("--red", "#ff453a"), drag: true, source: "you" });
+    } else if (riskSl != null && isFinite(riskSl)) {
+      out.push({ id: "sl", kind: "sl", price: sx(riskSl), label: linePctTxt("sl", "risk", riskPct), color: cssVar("--red", "#ff453a"), drag: true, source: "risk", dash: true });
+    }
+    const userTp = draft && draft.tpPrice != null ? draft.tpPrice : (snap && snap.tp_price);
+    const userTpPct = draft && draft.tpPct != null ? draft.tpPct : (snap && snap.tp_pct);
+    if (userTp != null && isFinite(userTp)) {
+      out.push({ id: "tp", kind: "tp", price: sx(userTp), label: linePctTxt("tp", "you", userTpPct), color: cssVar("--green", "#00d35a"), drag: true, source: "you" });
+    }
+    return out.filter(L => L.price != null && isFinite(L.price));
+  }
+  function heldFor(iso) {
+    if (!iso) return "—";
+    const s = Math.max(0, (Date.now() - new Date(iso)) / 1000);
+    if (s < 60) return "<1m";
+    if (s < 3600) return Math.round(s / 60) + "m";
+    if (s < 86400) return Math.floor(s / 3600) + "h " + Math.round((s % 3600) / 60) + "m";
+    return Math.floor(s / 86400) + "d " + Math.floor((s % 86400) / 3600) + "h";
   }
   const moneyS = v => v == null ? "—" : (v >= 0 ? "+" : "-") + "$" + Math.abs(v).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
   const kfmt = v => v == null ? "—" : v >= 1e6 ? "$" + (v / 1e6).toFixed(2) + "M" : v >= 1e3 ? "$" + (v / 1e3).toFixed(1) + "K" : "$" + v.toFixed(0);
@@ -864,9 +921,9 @@
     const mixOn = !!(S.state && S.state.mix && S.state.mix.active) && !missesOn;
     const mixBoard = mixOn ? `<div class="mixgrid">${(mixCards() || []).map(mixCard).join("")}</div>` : "";
     const html = navbar(S.showSearch ? `<div class="search"><input id="q" type="search" placeholder="Name, symbol or mint" value="${esc(S.search)}" autocomplete="off" autocapitalize="off"></div><div class="results">${results}</div>` : "") +
-      `<section class="hero glass"><div class="herotop"><span class="ter">${esc(mixOn ? "Mix" : heroLabel)}</span>${book === "PAPER" ? '<span class="pill paper">PAPER</span>' : book === "LIVE" ? '<span class="pill redp">LIVE</span>' : ""}${book === "LIVE" && (bk.wallet && bk.wallet.stale) ? '<span class="pill stale">sync stale</span>' : ""}</div>
+      `<section class="hero glass"><div class="herotop"><span class="ter">${esc(heroLabel)}</span>${book === "PAPER" ? '<span class="pill paper">PAPER</span>' : book === "LIVE" ? '<span class="pill redp">LIVE</span>' : ""}${mixOn ? '<span class="pill">Mix</span>' : ""}${book === "LIVE" && (bk.wallet && bk.wallet.stale) ? '<span class="pill stale">sync stale</span>' : ""}</div>
        ${bookseg}
-       ${mixOn ? mixBoard : heroBody}
+       ${heroBody}${(!missesOn && mixOn) ? mixBoard : ""}
       <div class="achips">${st.agents.map(a => `<a class="achip" href="#/agents"><i class="live ${esc(a.paused ? "paused" : a.status)}"></i>${TITLE[a.name]}</a>`).join("")}</div></section>
       ${missesOn ? "" : (book === "LIVE" ? `<div class="sh"><h2>Holdings</h2><span class="ter sm">${((bk.wallet && bk.wallet.holdings) || []).length || ""}</span></div>
       <div class="list glass">${((bk.wallet && bk.wallet.holdings) || []).length ? (bk.wallet.holdings).map(holdRow).join("") : `<div class="empty">${bk.wallet && bk.wallet.stale ? "Wallet sync stale" : "No holdings over $1"}</div>`}</div>`
@@ -960,28 +1017,52 @@
     const tp = tpText(p.tpPct, p.tpPart), live = p.mode === "LIVE";
     const draft = S.tpDraft[mint] != null ? S.tpDraft[mint] : p.tpPct != null ? String(p.tpPct) : "";
     const part = S.tpPart[mint] || p.tpPart || "all";
+    const slSaved = p.slPct != null ? p.slPct : (S.lineDraft[mint] && S.lineDraft[mint].slPct);
+    const slDraft = S.slDraft[mint] != null ? S.slDraft[mint] : (slSaved != null ? String(Math.round(Math.abs(slSaved) * 10) / 10) : "");
+    const slPart = S.slPart[mint] || p.slPart || "all";
+    const slRisk = p.lines && p.lines.sl_risk_pct;
+    const slLabel = p.slPct != null ? ("-" + Number(p.slPct).toLocaleString("en-US", { maximumFractionDigits: 2 }) + "% · sell " + (p.slPart === "half" ? "half" : "all") + " (you)")
+      : (slRisk != null ? (Number(slRisk).toFixed(Math.abs(slRisk) >= 10 ? 0 : 1) + "% · risk") : "risk stop");
     const sell = tgLink("sell_" + id), go = tgLink(tpPayload(id, draft, part) || ""), off = tgLink("tpoff_" + id);
+    const slGo = tgLink(slPayload(id, slDraft, slPart) || ""), slOff = tgLink("sloff_" + id);
     return `<div class="kv"><span class="sec">Take profit</span><span class="${tp ? "green" : "ter"}">${tp ? esc(tp) : "off"}</span></div>
+      <div class="kv"><span class="sec">Stop loss</span><span class="${p.slPct != null ? "red" : "ter"}">${esc(slLabel)}</span></div>
       <div class="manual">
         <div class="tprow"><label class="tpin"><span>+</span><input id="tpin" type="number" inputmode="decimal" min="0.1" max="100000" step="any" placeholder="50" value="${esc(draft)}" aria-label="Take profit percent"><span>%</span></label>
           <div class="seg" id="tpseg" role="group" aria-label="Sell when it hits"><button type="button" data-part="all" class="${part === "all" ? "on" : ""}">All</button><button type="button" data-part="half" class="${part === "half" ? "on" : ""}">Half</button></div></div>
         <div class="mbtns"><a class="mbtn${go ? "" : " off"}" id="tpgo" ${go ? `href="${esc(go)}"` : ""} target="_blank" rel="noopener">Set TP</a>
-          ${tp && off ? `<a class="mbtn ghost" href="${esc(off)}" target="_blank" rel="noopener">Clear TP</a>` : ""}
+          ${tp && off ? `<a class="mbtn ghost" href="${esc(off)}" target="_blank" rel="noopener">Clear TP</a>` : ""}</div>
+        <div class="tprow"><label class="tpin"><span>−</span><input id="slin" type="number" inputmode="decimal" min="0.1" max="99" step="any" placeholder="6" value="${esc(slDraft)}" aria-label="Stop loss percent"><span>%</span></label>
+          <div class="seg" id="slseg" role="group" aria-label="Sell when it hits the stop"><button type="button" data-part="all" class="${slPart === "all" ? "on" : ""}">All</button><button type="button" data-part="half" class="${slPart === "half" ? "on" : ""}">Half</button></div></div>
+        <div class="mbtns"><a class="mbtn${slGo ? "" : " off"}" id="slgo" ${slGo ? `href="${esc(slGo)}"` : ""} target="_blank" rel="noopener">Set SL</a>
+          ${p.slPct != null && slOff ? `<a class="mbtn ghost" href="${esc(slOff)}" target="_blank" rel="noopener">Clear SL</a>` : ""}
           ${sell ? `<a class="mbtn sell" href="${esc(sell)}" target="_blank" rel="noopener">Sell now</a>` : ""}</div>
-        <div class="s wrap">Opens the desk bot in Telegram: tap Start (or Send). ${live ? "LIVE: Sell sends you the FOMO sell link, the desk never places orders." : "PAPER: Sell asks for a Confirm tap, then fills at the current price."} The desk's own exits stay on; whichever fires first wins.</div>
+        <div class="s wrap">Drag the SL handle on the chart, or type a percent. Opens Telegram to save it. ${live ? "LIVE: a hit sends “hit TP/SL — sell on FOMO”; the desk never places orders." : "PAPER: a hit fills at the current price."} The risk agent's stop / trail stay on; whichever fires first wins.</div>
       </div>`;
   }
   function bindManual(p, mint) {
     const inp = document.getElementById("tpin"), seg = document.getElementById("tpseg"), go = document.getElementById("tpgo");
-    if (!inp || !go || !p) return;
+    const sl = document.getElementById("slin"), slseg = document.getElementById("slseg"), slgo = document.getElementById("slgo");
+    if (!p) return;
     const upd = () => {
-      const url = tgLink(tpPayload(p.id, S.tpDraft[mint] != null ? S.tpDraft[mint] : inp.value, S.tpPart[mint] || p.tpPart || "all") || "");
-      if (url) { go.href = url; go.classList.remove("off"); } else { go.removeAttribute("href"); go.classList.add("off"); }
+      if (inp && go) {
+        const url = tgLink(tpPayload(p.id, S.tpDraft[mint] != null ? S.tpDraft[mint] : inp.value, S.tpPart[mint] || p.tpPart || "all") || "");
+        if (url) { go.href = url; go.classList.remove("off"); } else { go.removeAttribute("href"); go.classList.add("off"); }
+      }
+      if (sl && slgo) {
+        const url = tgLink(slPayload(p.id, S.slDraft[mint] != null ? S.slDraft[mint] : sl.value, S.slPart[mint] || p.slPart || "all") || "");
+        if (url) { slgo.href = url; slgo.classList.remove("off"); } else { slgo.removeAttribute("href"); slgo.classList.add("off"); }
+      }
     };
-    inp.oninput = () => { S.tpDraft[mint] = inp.value; upd(); };
+    if (inp) inp.oninput = () => { S.tpDraft[mint] = inp.value; upd(); };
     if (seg) seg.querySelectorAll("button").forEach(b => b.onclick = () => {
       S.tpPart[mint] = b.dataset.part; seg.querySelectorAll("button").forEach(x => x.classList.toggle("on", x === b)); upd();
     });
+    if (sl) sl.oninput = () => { S.slDraft[mint] = sl.value; upd(); };
+    if (slseg) slseg.querySelectorAll("button").forEach(b => b.onclick = () => {
+      S.slPart[mint] = b.dataset.part; slseg.querySelectorAll("button").forEach(x => x.classList.toggle("on", x === b)); upd();
+    });
+    upd();
   }
   const STAGE = { watching: ["Watching", "cyan"], killed: ["Skipped", "ter"], passed: ["→ Auditor", "cyan"], auditing: ["Auditing", "cyan"],
                   rejected: ["Rejected", "red"], cleared: ["Cleared", "green"], holding: ["Holding", "green"], traded: ["Traded", "sec"] };
@@ -1357,11 +1438,43 @@
       const base = gt || deskCandles(c.candles, step), k = mcOn ? fac : 1;
       const list = k == null ? [] : k === 1 ? base : base.map(q => ({ ...q, o: q.o * k, h: q.h * k, l: q.l * k, c: q.c * k }));
       const sc = v => v == null || k == null ? null : v * k;
-      const lastC = DeskChart.candles(cv, list, x ? sc(x.risk_trailing_stop) : null,
+      const rawList = k == null ? [] : list.map(q => {
+        const px = k === 1 ? q.c : (q.c / k);
+        return { ...q, px, mc: (fac != null && px != null && isFinite(px)) ? px * fac : null };
+      });
+      const ath = athFrom(c, base);
+      const draft = S.lineDraft[mint] || {};
+      const lines = (p && p.open) ? posChartLines(p.entryPrice, p.lines, draft, ath, sc) : (ath != null && k != null ? posChartLines(null, null, {}, ath, sc) : []);
+      const lastC = DeskChart.candles(cv, rawList, null,
                         { loading: !!c.pool && (!g || g.loading), step, min: 1, fmt: mcOn ? kfmt : undefined,
-                          entryLine: p && p.entryPrice != null ? sc(p.entryPrice) : null,
+                          lines, entryLine: null,
                           emptyText: mcOn && k == null ? "Market cap n/a" : undefined,
-                          volume: volOn() });
+                          volume: volOn(),
+                          mcFmt: kfmt,
+                          tip: (candle, info) => {
+                            const when = info && info.time ? info.time : "";
+                            const px = candle.px != null ? candle.px : candle.c;
+                            const mc = candle.mc;
+                            return `<div class="t">${esc(when)}</div><div><span class="k">Price</span> ${esc(price(px))}</div>` +
+                              (mc != null ? `<div><span class="k">MC</span> ${esc(kfmt(mc))}</div>` : "");
+                          },
+                          onDragEnd: (id, px, kind) => {
+                            if (!p || !p.open || !p.entryPrice) return;
+                            const raw = (k && k !== 1) ? px / k : px;
+                            const entry = p.entryPrice;
+                            S.lineDraft[mint] = S.lineDraft[mint] || {};
+                            if (kind === "sl" || id === "sl") {
+                              const pct = 100 * (1 - raw / entry);
+                              S.lineDraft[mint].slPrice = raw; S.lineDraft[mint].slPct = pct;
+                              S.slDraft[mint] = String(Math.round(Math.abs(pct) * 10) / 10);
+                            } else if (kind === "tp" || id === "tp") {
+                              const pct = 100 * (raw / entry - 1);
+                              S.lineDraft[mint].tpPrice = raw; S.lineDraft[mint].tpPct = pct;
+                              S.tpDraft[mint] = String(Math.round(pct * 10) / 10);
+                            }
+                            render();
+                          }
+                        });
       const flipMc = e => { e.preventDefault(); applyMcMode(!mcMode()); };
       const tg = document.getElementById("mctog");
       if (tg) tg.onclick = flipMc;
@@ -1502,8 +1615,8 @@
           })()}</div>
         </div>
         <div class="setrow" id="appver">
-          <div class="sl"><span>App version</span><span class="val">v36</span></div>
-          <div class="s wrap">If this isn’t v36, the phone is still on an old copy. Close the app from the app switcher and reopen it.</div>
+          <div class="sl"><span>App version</span><span class="val">v37</span></div>
+          <div class="s wrap">If this isn’t v37, the phone is still on an old copy. Close the app from the app switcher and reopen it.</div>
         </div>
       </div>
       <div class="grp">Notifications</div>
@@ -1824,50 +1937,119 @@
     const solS = v => v == null ? "—" : (v >= 0 ? "+" : "") + Number(v).toFixed(4) + " SOL";
     const cls = v => v == null ? "" : v >= 0 ? "green" : "red";
     const px = v => v == null || !isFinite(v) ? "—" : (v >= 1 ? Number(v).toPrecision(6) : Number(v).toPrecision(4));
-    const kv = (k, v, c) => `<div class="kv"><span class="sec">${k}</span><span class="${c || ""}">${v}</span></div>`;
     const btn = (pl, label, extra) => { const l = tgLink(pl); return l ? `<a class="mbtn${extra ? " " + extra : ""}" href="${esc(l)}" target="_blank" rel="noopener">${esc(label)}</a>` : ""; };
     const open = p.status !== "closed";
     const pnlCls = cls(p.pnl_usd != null ? p.pnl_usd : (p.pnl_pct != null ? p.pnl_pct : p.pnl_sol));
+    const coin = S.coin[p.mint] || {};
+    const key = "bot:" + p.id;
+    const draft = S.lineDraft[key] || {};
+    const snap = p.lines || (open ? { sl_risk_price: p.stop_price, sl_risk_kind: p.trail_active ? "trail" : "stop",
+      sl_risk_pct: (p.entry_price && p.stop_price) ? 100 * (p.stop_price / p.entry_price - 1) : null,
+      tp_price: p.tp_pct != null && p.entry_price ? p.entry_price * (1 + p.tp_pct / 100) : null,
+      tp_pct: p.tp_pct, sl_price: p.sl_pct != null && p.entry_price ? p.entry_price * (1 - p.sl_pct / 100) : null,
+      sl_pct: p.sl_pct } : null);
+    const fac = (coin.stats && coin.stats.marketCap != null && (p.price || coin.price))
+      ? coin.stats.marketCap / (p.price || coin.price) : null;
+    const tpDraft = S.tpDraft[key] != null ? S.tpDraft[key] : (p.tp_pct != null ? String(p.tp_pct) : "");
+    const slDraft = S.slDraft[key] != null ? S.slDraft[key] : (p.sl_pct != null ? String(p.sl_pct) : "");
+    const tpPart = S.tpPart[key] || p.tp_part || "all";
+    const slPart = S.slPart[key] || p.sl_part || "all";
+    const tpGo = tgLink(tpPayload(p.id, tpDraft, tpPart, "bottp_") || "");
+    const slGo = tgLink(slPayload(p.id, slDraft, slPart, "botsl_") || "");
+    const solscan = p.mint ? "https://solscan.io/token/" + encodeURIComponent(p.mint) : (p.buy_link && safeUrl(p.buy_link) ? p.buy_link : "");
     const html = backbar("Bot", "#/bot") + `<div class="coinhead">
-        <div class="cname">${logo(p.name || p.mint, null, 48)}<span class="cnm"><span>${esc(p.name || (p.mint || "").slice(0, 4) + "…" + (p.mint || "").slice(-3))}</span>
-          <span class="sec sm">#${esc(p.id)} · ${esc(p.mode || "")} · ${esc(p.status || "")}${p.exit_reason ? " · " + esc(p.exit_reason) : ""}</span></span>
+        <div class="cname">${logo(p.name || p.mint, coin.logo, 48)}<span class="cnm"><span>${esc(p.name || (p.mint || "").slice(0, 4) + "…" + (p.mint || "").slice(-3))}</span>
+          <span class="sec sm">${esc(p.mode || "")} · ${esc(p.status || "")}${p.exit_reason ? " · " + esc(p.exit_reason) : ""}</span></span>
+          ${p.pnl_pct != null ? `<span class="cpill lg2 ${p.pnl_pct >= 0 ? "up" : "down"}">${esc(sgn(p.pnl_pct, 2))}</span>` : ""}
           ${p.mode === "LIVE" ? '<span class="pill redp">LIVE</span>' : '<span class="pill paper">DRY</span>'}</div>
       </div>
-      <div class="card glass poscard"><h3>Bot position</h3>
-        <div class="pospnl">
-          <div class="posnow"><div class="posbig">${p.value_usd != null ? esc(money(p.value_usd)) : esc(sol(p.value_sol))}</div><div class="s">${open ? "now" : "exit value"}</div></div>
-          <div class="poschg"><div class="posbig ${pnlCls}">${esc(pctS(p.pnl_pct))}</div><div class="s">${p.pnl_usd != null ? esc(moneyS(p.pnl_usd)) : esc(solS(p.pnl_sol))}</div></div>
-        </div>
-        ${kv("Put in", `${p.cost_usd != null ? esc(money(p.cost_usd)) : "—"} <span class="ter">· ${esc(sol(p.cost_sol))}</span>`)}
-        ${kv("SOL/USD at entry", p.entry_sol_usd == null ? "—" : esc(Number(p.entry_sol_usd).toFixed(2)))}
-        ${kv("P&amp;L", `${p.pnl_usd != null ? esc(moneyS(p.pnl_usd)) : "—"} <span class="ter">· ${esc(solS(p.pnl_sol))}</span>`, pnlCls)}
-        ${kv("Entry price", esc(px(p.entry_price)))}
-        ${kv("Entered", esc(vilnius(p.opened_at)))}
-        ${open ? "" : kv("Exit price", esc(px(p.exit_price)))}
-        ${open ? "" : kv("Exited", esc(vilnius(p.closed_at)) + (p.exit_reason ? " · " + esc(p.exit_reason) : ""))}
-        ${open && p.size_sol != null && p.cost_sol != null && p.size_sol !== p.cost_sol ? kv("Still in", esc(sol(p.size_sol))) : ""}
-        ${p.buy_link && safeUrl(p.buy_link) ? kv("Buy tx", ext(p.buy_link, "Solscan", "link")) : ""}
-        ${(p.sell_links || []).map((u, i) => safeUrl(u) ? kv((p.sell_links.length > 1 ? "Sell tx " + (i + 1) : "Sell tx"), ext(u, "Solscan", "link")) : "").join("")}
-        ${open ? `<div class="botbtns">${btn("botsell_" + p.id, "Sell")}${btn("botsellhalf_" + p.id, "Half")}</div>
-          <div class="s wrap ter" style="margin-top:8px">Opens the desk bot in Telegram. The app never places the trade.</div>` : ""}
-      </div>
-      <div class="chartcard glass" id="botposchart"><div class="chsrc"><span class="srcl">desk prices · entry marked</span></div>
+      <div class="chartcard glass" id="botposchart"><div class="chsrc"><span class="srcl">desk prices · press and hold a candle</span></div>
+        <div class="zoomrow"><span class="zoomctl" role="group" aria-label="Chart zoom"><button type="button" id="zout" aria-label="Zoom out">−</button><button type="button" id="zfit" aria-label="Show all candles">All</button><button type="button" id="zin" aria-label="Zoom in">+</button></span><span class="zoomhint">pinch or drag · drag SL/TP handles</span></div>
         <div class="chartwrap" style="position:relative"><canvas id="botcandles"></canvas>${(p.candles || []).length ? "" : '<div class="chartempty">no price data yet</div>'}</div></div>
+      <div class="statgrid">
+        <div class="cell"><div class="k">Invested</div><div class="v">${p.cost_usd != null ? esc(money(p.cost_usd)) : "—"}<span class="ter"> · ${esc(sol(p.cost_sol))}</span></div></div>
+        <div class="cell"><div class="k">Value</div><div class="v">${p.value_usd != null ? esc(money(p.value_usd)) : "—"}<span class="ter"> · ${esc(sol(p.value_sol))}</span></div></div>
+        <div class="cell"><div class="k">PnL</div><div class="v ${pnlCls}">${p.pnl_usd != null ? esc(moneyS(p.pnl_usd)) : "—"}<span class="ter"> · ${esc(solS(p.pnl_sol))}</span></div></div>
+        <div class="cell"><div class="k">Entry</div><div class="v">${esc(px(p.entry_price))}</div></div>
+        <div class="cell"><div class="k">Now</div><div class="v">${esc(px(p.price))}</div></div>
+        <div class="cell"><div class="k">Held for</div><div class="v">${esc(heldFor(p.opened_at))}</div></div>
+      </div>
+      ${open ? `<div class="manual gutbot">
+        <div class="tprow"><label class="tpin"><span>+</span><input id="bottpin" type="number" inputmode="decimal" min="0.1" max="100000" step="any" placeholder="50" value="${esc(tpDraft)}" aria-label="Take profit percent"><span>%</span></label>
+          <div class="seg" id="bottpseg"><button type="button" data-part="all" class="${tpPart === "all" ? "on" : ""}">All</button><button type="button" data-part="half" class="${tpPart === "half" ? "on" : ""}">Half</button></div></div>
+        <div class="mbtns"><a class="mbtn${tpGo ? "" : " off"}" id="bottpgo" ${tpGo ? `href="${esc(tpGo)}"` : ""} target="_blank" rel="noopener">Set TP</a>
+          ${p.tp_pct != null ? `<a class="mbtn ghost" href="${esc(tgLink("bottpoff_" + p.id) || "")}" target="_blank" rel="noopener">Clear TP</a>` : ""}</div>
+        <div class="tprow"><label class="tpin"><span>−</span><input id="botslin" type="number" inputmode="decimal" min="0.1" max="99" step="any" placeholder="6" value="${esc(slDraft)}" aria-label="Stop loss percent"><span>%</span></label>
+          <div class="seg" id="botslseg"><button type="button" data-part="all" class="${slPart === "all" ? "on" : ""}">All</button><button type="button" data-part="half" class="${slPart === "half" ? "on" : ""}">Half</button></div></div>
+        <div class="mbtns"><a class="mbtn${slGo ? "" : " off"}" id="botslgo" ${slGo ? `href="${esc(slGo)}"` : ""} target="_blank" rel="noopener">Set SL</a>
+          ${p.sl_pct != null ? `<a class="mbtn ghost" href="${esc(tgLink("botsloff_" + p.id) || "")}" target="_blank" rel="noopener">Clear SL</a>` : ""}</div>
+      </div>
+      <div class="botacts">${btn("botsell_" + p.id, "Sell")}${btn("botsellhalf_" + p.id, "Half")}</div>
+      <div class="s wrap ter gutbot">Saves in Telegram. A hit sells through the bot’s usual path. This does not turn the bot on.</div>` : ""}
+      ${solscan && safeUrl(solscan) ? `<div class="solmini">${ext(solscan, "Solscan", "link")}</div>` : ""}
       <div class="note mono">${esc(p.mint || "")}</div>
       <div class="spacer"></div>`;
     return { html, after() {
+      const bindLine = (inpId, goId, segId, draftKey, partKey, kind) => {
+        const inp = document.getElementById(inpId), go = document.getElementById(goId), seg = document.getElementById(segId);
+        const upd = () => {
+          if (!inp || !go) return;
+          const fn = kind === "tp" ? tpPayload : slPayload;
+          const prefix = kind === "tp" ? "bottp_" : "botsl_";
+          const url = tgLink(fn(p.id, S[draftKey][key] != null ? S[draftKey][key] : inp.value, S[partKey][key] || (kind === "tp" ? p.tp_part : p.sl_part) || "all", prefix) || "");
+          if (url) { go.href = url; go.classList.remove("off"); } else { go.removeAttribute("href"); go.classList.add("off"); }
+        };
+        if (inp) inp.oninput = () => { S[draftKey][key] = inp.value; upd(); };
+        if (seg) seg.querySelectorAll("button").forEach(b => b.onclick = () => {
+          S[partKey][key] = b.dataset.part; seg.querySelectorAll("button").forEach(x => x.classList.toggle("on", x === b)); upd();
+        });
+        upd();
+      };
+      bindLine("bottpin", "bottpgo", "bottpseg", "tpDraft", "tpPart", "tp");
+      bindLine("botslin", "botslgo", "botslseg", "slDraft", "slPart", "sl");
       const cv = document.getElementById("botcandles");
       if (cv && window.DeskChart) {
-        const list = deskCandles(p.candles || [], 60);
-        DeskChart.candles(cv, list, null, { entryLine: p.entry_price != null ? p.entry_price : null, min: 1,
-          emptyText: (p.candles || []).length ? undefined : "no price data yet" });
+        const list = deskCandles(p.candles || [], 60).map(q => ({ ...q, px: q.c, mc: (fac != null && q.c != null) ? q.c * fac : null }));
+        const ath = athFrom(coin, list);
+        const lines = open ? posChartLines(p.entry_price, snap, draft, ath) : (ath != null ? posChartLines(p.entry_price, null, {}, ath) : posChartLines(p.entry_price, null, {}, ath));
+        DeskChart.candles(cv, list, null, { entryLine: null, lines, min: 1,
+          emptyText: (p.candles || []).length ? undefined : "no price data yet",
+          mcFmt: kfmt,
+          tip: (candle, info) => {
+            const when = info && info.time ? info.time : "";
+            const pr = candle.px != null ? candle.px : candle.c;
+            const mc = candle.mc;
+            return `<div class="t">${esc(when)}</div><div><span class="k">Price</span> ${esc(price(pr))}</div>` +
+              (mc != null ? `<div><span class="k">MC</span> ${esc(kfmt(mc))}</div>` : "");
+          },
+          onDragEnd: (id, raw, kind) => {
+            if (!open || !p.entry_price) return;
+            S.lineDraft[key] = S.lineDraft[key] || {};
+            if (kind === "sl" || id === "sl") {
+              const pct = 100 * (1 - raw / p.entry_price);
+              S.lineDraft[key].slPrice = raw; S.lineDraft[key].slPct = pct;
+              S.slDraft[key] = String(Math.round(Math.abs(pct) * 10) / 10);
+            } else if (kind === "tp" || id === "tp") {
+              const pct = 100 * (raw / p.entry_price - 1);
+              S.lineDraft[key].tpPrice = raw; S.lineDraft[key].tpPct = pct;
+              S.tpDraft[key] = String(Math.round(pct * 10) / 10);
+            }
+            render();
+          }
+        });
+        const doZoom = dir => { DeskChart.zoom(cv, dir); };
+        const zout = document.getElementById("zout"), zin = document.getElementById("zin"), zfit = document.getElementById("zfit");
+        if (zout) zout.onclick = e => { e.preventDefault(); doZoom("out"); };
+        if (zin) zin.onclick = e => { e.preventDefault(); doZoom("in"); };
+        if (zfit) zfit.onclick = e => { e.preventDefault(); doZoom("fit"); };
       }
     } };
   }
 
   function render() {
     tickOffline();
-    if (document.activeElement && document.activeElement.id === "tpin" && route().name === "coin") return;  // typing a TP
+    if (document.querySelector("canvas.inspecting, canvas.linedrag, canvas.holding")) return;
+    if (document.activeElement && ["tpin", "slin", "bottpin", "botslin"].includes(document.activeElement.id)) return;
     const r = route();
     view.classList.toggle("bottab", r.name === "bot");
     document.querySelectorAll(".tab").forEach(t => t.classList.toggle("on", t.dataset.tab === r.name || ((r.name === "coin" || r.name === "audit") && t.dataset.tab === "home") || (r.name === "report" && t.dataset.tab === "activity")));
@@ -1908,7 +2090,7 @@
   if ("serviceWorker" in navigator && !LOCAL) {
     let swReload = false;
     navigator.serviceWorker.addEventListener("controllerchange", () => { if (swReload) return; swReload = true; location.reload(); });
-    navigator.serviceWorker.register("sw.js?v=36", { updateViaCache: "none" }).then(reg => { try { reg.update(); } catch (e) {} }).catch(() => {});
+    navigator.serviceWorker.register("sw.js?v=37", { updateViaCache: "none" }).then(reg => { try { reg.update(); } catch (e) {} }).catch(() => {});
   }
   render();
   if (BASE) poll();

@@ -252,11 +252,12 @@
     const real = (list || []).filter(c => c && c.o != null && c.h != null && c.l != null && c.c != null && c.h > 0);
     const st = stOf(canvas);
     canvas._draw = () => candles(canvas, list, exitLine, opts);
+    canvas._opts = opts;
     const F = opts.fmt || fmtP, entryLine = opts.entryLine != null && isFinite(opts.entryLine) ? opts.entryLine : null;
     if (opts.emptyText || real.length < (opts.min || 3)) {
       ctx.fillStyle = C.sec; ctx.font = "15px " + FONT; ctx.textAlign = "center";
       ctx.fillText(opts.emptyText || (opts.loading ? "Loading chart…" : "Chart builds as trades come in"), w / 2, h / 2 - 10); ctx.textAlign = "left";
-      canvas._last = null; return null;
+      canvas._last = null; canvas._chart = null; hideInspect(canvas); return null;
     }
     const all = fillGaps(real, opts.step);
     const slot = st.slot;
@@ -271,11 +272,22 @@
                      sig: real.slice(-5).map(c => c.c.toPrecision(5)).join(","), slot, fit };
     const vis = cs.filter(c => !c.gap);
     let lo = Math.min(...(vis.length ? vis : cs).map(c => c.l)), hi = Math.max(...(vis.length ? vis : cs).map(c => c.h));
-    if (exitLine != null && exitLine > lo * 0.5 && exitLine < hi * 1.5) { lo = Math.min(lo, exitLine); hi = Math.max(hi, exitLine); }
-    if (entryLine != null && entryLine > lo * 0.5 && entryLine < hi * 1.5) { lo = Math.min(lo, entryLine); hi = Math.max(hi, entryLine); }
+    const extraLines = [];
+    if (exitLine != null && isFinite(exitLine)) extraLines.push({ id: "risk", price: exitLine, label: "SL (risk)", color: C.orange, dash: true });
+    if (entryLine != null && isFinite(entryLine)) extraLines.push({ id: "entry", price: entryLine, label: "Entry", color: C.cyan, drag: false });
+    const lines = (opts.lines || []).filter(L => L && L.price != null && isFinite(L.price)).concat(
+      opts.lines ? [] : extraLines
+    );
+    lines.forEach(L => { lo = Math.min(lo, L.price); hi = Math.max(hi, L.price); });
+    if (exitLine != null && opts.lines) { /* included in opts.lines by the caller */ }
+    if (!opts.lines) {
+      if (exitLine != null && exitLine > lo * 0.5 && exitLine < hi * 1.5) { lo = Math.min(lo, exitLine); hi = Math.max(hi, exitLine); }
+      if (entryLine != null && entryLine > lo * 0.5 && entryLine < hi * 1.5) { lo = Math.min(lo, entryLine); hi = Math.max(hi, entryLine); }
+    }
     if (hi - lo <= hi * 1e-6) { hi *= 1.02; lo *= 0.98; }
-    const pad = (hi - lo) * 0.06; lo -= pad; hi += pad;
+    const pad = (hi - lo) * 0.08; lo -= pad; hi += pad;
     const Y = v => priceBot - (v - lo) / (hi - lo) * (priceBot - top);
+    const Yinv = y => lo + (priceBot - y) / (priceBot - top) * (hi - lo);
     ctx.font = "11px " + FONT; ctx.textBaseline = "middle";
     niceTicks(lo, hi, 4).forEach(v => {
       const y = Math.round(Y(v)) + 0.5; if (y < top || y > priceBot) return;
@@ -314,57 +326,167 @@
       ctx.fillStyle = lc; roundRect(ctx, plotW + 2, ly - 9, AX - 4, 18, 4); ctx.fill();
       ctx.fillStyle = isLight(lc) ? "#111" : "#fff"; ctx.font = "600 11px " + FONT; ctx.textBaseline = "middle"; ctx.fillText(F(v), plotW + 6, ly); ctx.textBaseline = "alphabetic";
     };
-    if (entryLine != null) {
-      const y = Y(entryLine);
-      if (y >= top && y <= priceBot) {
-        ctx.strokeStyle = C.cyan; ctx.lineWidth = 1.5; ctx.globalAlpha = 0.9;
-        ctx.beginPath(); ctx.moveTo(0, Math.round(y) + 0.5); ctx.lineTo(plotW, Math.round(y) + 0.5); ctx.stroke(); ctx.globalAlpha = 1;
-        ctx.font = "600 12px " + FONT; ctx.fillStyle = C.cyan; ctx.textAlign = "right";
-        ctx.fillText("Entry " + F(entryLine), plotW - 4, y - 7); ctx.textAlign = "left";
+    // Horizontal level lines (Entry / TP / SL / ATH). Draggable ones get a handle on the right.
+    const drawn = [];
+    lines.forEach(L => {
+      const y = Y(L.price);
+      if (y < top - 2 || y > priceBot + 2) return;
+      const col = L.color || C.orange;
+      ctx.save();
+      ctx.strokeStyle = col; ctx.lineWidth = L.drag || L.source === "you" ? 1.8 : 1.4;
+      ctx.globalAlpha = L.source === "risk" ? 0.85 : 0.95;
+      if (L.dash !== false && L.source !== "you") ctx.setLineDash(L.dash === false ? [] : [6, 5]);
+      if (L.source === "you") ctx.setLineDash([]);
+      ctx.beginPath(); ctx.moveTo(0, Math.round(y) + 0.5); ctx.lineTo(plotW, Math.round(y) + 0.5); ctx.stroke();
+      ctx.setLineDash([]); ctx.globalAlpha = 1;
+      ctx.font = "600 11px " + FONT; ctx.fillStyle = col; ctx.textAlign = "left"; ctx.textBaseline = "bottom";
+      const lab = L.label || "";
+      ctx.fillText(lab, 4, y - 3);
+      if (L.drag) {
+        const hx = plotW - 10, hy = y;
+        ctx.beginPath(); ctx.arc(hx, hy, 7, 0, Math.PI * 2);
+        ctx.fillStyle = col; ctx.fill();
+        ctx.lineWidth = 2; ctx.strokeStyle = C.bg; ctx.stroke();
+        drawn.push({ id: L.id, price: L.price, y, hx, hy, r: 16, color: col, kind: L.kind || L.id });
       }
-    }
-    if (exitLine != null) {
-      const y = Y(exitLine);
-      if (y >= top && y <= priceBot) {
-        ctx.setLineDash([6, 5]); ctx.strokeStyle = C.orange; ctx.lineWidth = 1.5;
-        ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(plotW, y); ctx.stroke(); ctx.setLineDash([]);
-        ctx.font = "600 12px " + FONT; ctx.fillStyle = C.orange; ctx.fillText("Risk trailing stop", 4, y - 7);
-      }
-    }
+      ctx.restore();
+    });
     const prevC = canvas._lastC; canvas._lastC = last.c;
-    if (prevC != null && prevC !== last.c && !RM() && !st.off) {
+    if (prevC != null && prevC !== last.c && !RM() && !st.off && !st.inspect) {
       const snap = ctx.getImageData(0, 0, canvas.width, canvas.height), dpr = window.devicePixelRatio || 1;
       anim(450, p => { ctx.putImageData(snap, 0, 0); ctx.setTransform(dpr, 0, 0, dpr, 0, 0); drawTag(prevC + (last.c - prevC) * p); });
     } else drawTag(last.c);
+    canvas._chart = { Y, Yinv, lo, hi, top, priceBot, plotW, AX, h, cs, X, n, bw, lines, handles: drawn, F };
     bindChart(canvas);
+    if (st.inspect && st.inspectI != null) showInspect(canvas, st.inspectI);
     const lx = X(n - 1);
     canvas._last = st.off ? null : { x: lx, y: Y(Math.max(last.o, last.c)), h: Math.max(4, Y(Math.min(last.o, last.c)) - Y(Math.max(last.o, last.c))), w: bw, up: last.c >= last.o };
     return canvas._last;
+  }
+
+  function overlay(canvas, cls) {
+    const wrap = canvas.parentNode;
+    if (!wrap) return null;
+    let el = wrap.querySelector("." + cls);
+    if (!el) {
+      el = document.createElement("div");
+      el.className = cls;
+      el.hidden = true;
+      wrap.appendChild(el);
+    }
+    return el;
+  }
+  function hideInspect(canvas) {
+    const st = canvas._st;
+    if (st) { st.inspect = false; st.inspectI = null; }
+    canvas.classList.remove("inspecting");
+    ["chx-v", "chx-h", "chtip"].forEach(c => { const el = canvas.parentNode && canvas.parentNode.querySelector("." + c); if (el) el.hidden = true; });
+  }
+  function candleAt(chart, x) {
+    if (!chart || !chart.cs || !chart.cs.length) return null;
+    let best = 0, bd = 1e9;
+    for (let i = 0; i < chart.cs.length; i++) {
+      const d = Math.abs(chart.X(i) - x);
+      if (d < bd) { bd = d; best = i; }
+    }
+    return best;
+  }
+  function showInspect(canvas, i) {
+    const ch = canvas._chart, opts = canvas._opts || {}, st = stOf(canvas);
+    if (!ch || !ch.cs[i] || ch.cs[i].gap) return;
+    st.inspect = true; st.inspectI = i; canvas.classList.add("inspecting");
+    const c = ch.cs[i], x = ch.X(i), y = ch.Y(c.c);
+    const v = overlay(canvas, "chx-v"), h = overlay(canvas, "chx-h"), tip = overlay(canvas, "chtip");
+    if (!v || !h || !tip) return;
+    v.hidden = false; h.hidden = false; tip.hidden = false;
+    v.style.left = Math.round(x) + "px";
+    v.style.top = ch.top + "px";
+    v.style.height = Math.max(0, ch.priceBot - ch.top) + "px";
+    h.style.left = "0px";
+    h.style.top = Math.round(y) + "px";
+    h.style.width = ch.plotW + "px";
+    const F = ch.F || fmtP;
+    const when = new Date(c.t * 1000);
+    const time = when.toLocaleString([], { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit", hour12: false });
+    const px = c.px != null && isFinite(c.px) ? c.px : c.c;
+    const mc = c.mc != null && isFinite(c.mc) ? c.mc : null;
+    let html;
+    if (typeof opts.tip === "function") html = opts.tip(c, { time, price: px, mc, F });
+    else {
+      html = `<div class="t">${time}</div><div><span class="k">Price</span> ${F(px)}</div>` +
+        (mc != null ? `<div><span class="k">MC</span> ${typeof opts.mcFmt === "function" ? opts.mcFmt(mc) : F(mc)}</div>` : "");
+    }
+    tip.innerHTML = html;
+    const wrap = canvas.parentNode.getBoundingClientRect();
+    // Position the tip so it stays inside the wrap and off the finger.
+    tip.style.left = "0px"; tip.style.top = "0px";
+    const tw = tip.offsetWidth || 140, th = tip.offsetHeight || 60;
+    let left = x + 12, top = y - th - 10;
+    if (left + tw > wrap.width - 8) left = x - tw - 12;
+    if (left < 4) left = 4;
+    if (top < 4) top = y + 12;
+    tip.style.left = Math.round(left) + "px";
+    tip.style.top = Math.round(top) + "px";
   }
 
   function bindChart(canvas) {
     if (canvas._drag) return;
     canvas._drag = true;
     canvas.style.touchAction = "none";
+    canvas.style.webkitUserSelect = "none";
+    canvas.style.userSelect = "none";
     const pts = new Map();
-    let x0 = null, o0 = 0, pinching = false, pSlot = SLOT_DEF, pDist = 0, pMid = 0;
-    const plotX = ev => {
+    let x0 = null, y0 = null, o0 = 0, pinching = false, pSlot = SLOT_DEF, pDist = 0, pMid = 0;
+    let holdT = null, lineDrag = null, moved = false;
+    const HOLD_MS = 380;
+    const plotXY = ev => {
       const r = canvas.getBoundingClientRect();
-      return ev.clientX - r.left;
+      return { x: ev.clientX - r.left, y: ev.clientY - r.top };
     };
+    const hitHandle = (x, y) => {
+      const ch = canvas._chart;
+      if (!ch || !ch.handles) return null;
+      for (let i = ch.handles.length - 1; i >= 0; i--) {
+        const h = ch.handles[i];
+        if (Math.hypot(x - h.hx, y - h.hy) <= h.r) return h;
+      }
+      return null;
+    };
+    const clearHold = () => { if (holdT) { clearTimeout(holdT); holdT = null; } canvas.classList.remove("holding"); };
+    canvas.addEventListener("contextmenu", e => { e.preventDefault(); });
     canvas.addEventListener("pointerdown", e => {
       canvas.setPointerCapture && canvas.setPointerCapture(e.pointerId);
+      const { x, y } = plotXY(e);
       pts.set(e.pointerId, { x: e.clientX, y: e.clientY });
       if (pts.size === 2) {
-        pinching = true; x0 = null;
+        pinching = true; x0 = null; lineDrag = null; clearHold(); hideInspect(canvas);
         const [a, b] = [...pts.values()];
         pDist = Math.hypot(a.x - b.x, a.y - b.y) || 1;
         pSlot = stOf(canvas).slot;
         const r = canvas.getBoundingClientRect();
         pMid = (a.x + b.x) / 2 - r.left;
-      } else if (pts.size === 1) {
-        pinching = false; x0 = e.clientX; o0 = stOf(canvas).off;
+        return;
       }
+      const handle = hitHandle(x, y);
+      if (handle) {
+        lineDrag = handle; moved = false; clearHold(); hideInspect(canvas);
+        canvas.classList.add("linedrag");
+        return;
+      }
+      pinching = false; x0 = e.clientX; y0 = e.clientY; o0 = stOf(canvas).off; moved = false;
+      clearHold();
+      canvas.classList.add("holding");
+      holdT = setTimeout(() => {
+        holdT = null;
+        if (lineDrag || pinching || pts.size !== 1) return;
+        const ch = canvas._chart;
+        if (!ch) return;
+        const i = candleAt(ch, plotXY(e).x);
+        if (i == null) return;
+        showInspect(canvas, i);
+        x0 = null; // freeze pan once inspect starts
+        try { navigator.vibrate && navigator.vibrate(10); } catch (err) {}
+      }, HOLD_MS);
     });
     canvas.addEventListener("pointermove", e => {
       if (!pts.has(e.pointerId)) return;
@@ -376,7 +498,32 @@
         zoomAt(canvas, pSlot * (dist / pDist), (a.x + b.x) / 2 - r.left);
         return;
       }
+      const { x, y } = plotXY(e);
+      if (lineDrag) {
+        const ch = canvas._chart, opts = canvas._opts || {};
+        if (!ch) return;
+        const price = Math.max(ch.lo, Math.min(ch.hi, ch.Yinv(y)));
+        lineDrag.price = price;
+        if (opts.lines) {
+          const L = opts.lines.find(q => q.id === lineDrag.id);
+          if (L) L.price = price;
+        }
+        if (typeof opts.onDrag === "function") opts.onDrag(lineDrag.id, price, lineDrag.kind);
+        canvas._draw && canvas._draw();
+        return;
+      }
+      const st = stOf(canvas);
+      if (st.inspect) {
+        const ch = canvas._chart;
+        const i = candleAt(ch, x);
+        if (i != null) showInspect(canvas, i);
+        return;
+      }
       if (x0 == null || pinching) return;
+      if (!moved && (Math.abs(e.clientX - x0) > 10 || Math.abs(e.clientY - y0) > 10)) {
+        moved = true; clearHold();
+      }
+      if (!moved) return;
       const slot = stOf(canvas).slot;
       canvas._st.off = Math.max(0, o0 + (e.clientX - x0) / slot);
       canvas._draw && canvas._draw();
@@ -384,13 +531,23 @@
     const end = e => {
       pts.delete(e.pointerId);
       if (pts.size < 2) pinching = false;
-      if (pts.size === 0) x0 = null;
+      if (lineDrag && pts.size === 0) {
+        const opts = canvas._opts || {}, L = lineDrag;
+        canvas.classList.remove("linedrag");
+        lineDrag = null;
+        if (typeof opts.onDragEnd === "function") opts.onDragEnd(L.id, L.price, L.kind);
+      }
+      if (pts.size === 0) {
+        x0 = null; y0 = null;
+        clearHold();
+        if (stOf(canvas).inspect) hideInspect(canvas);
+      }
     };
     ["pointerup", "pointercancel", "pointerleave"].forEach(ev => canvas.addEventListener(ev, end));
     canvas.addEventListener("dblclick", () => { zoom(canvas, "reset"); });
     canvas.addEventListener("wheel", e => {
       e.preventDefault();
-      zoomAt(canvas, stOf(canvas).slot * (e.deltaY > 0 ? 1 / 1.12 : 1.12), plotX(e));
+      zoomAt(canvas, stOf(canvas).slot * (e.deltaY > 0 ? 1 / 1.12 : 1.12), plotXY(e).x);
     }, { passive: false });
   }
 
