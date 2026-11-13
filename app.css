@@ -1149,3 +1149,9 @@ html,body{overflow-x:hidden;max-width:100%}
 .s.wrap{overflow-wrap:anywhere;word-break:break-word;white-space:normal;max-width:100%}
 .tablewrap,table{display:block;max-width:100%;overflow-x:auto;-webkit-overflow-scrolling:touch}
 .view.bottab .list,.view.bottab .card{overflow-x:hidden;max-width:100%}
+
+/* v33 Bot position page: no sideways overflow on iPhone */
+.view.bottab .chartcard,.view.bottab .poscard,.view.bottab .coinhead,.view.bottab .pospnl{max-width:100%;overflow-x:hidden}
+.view.bottab a.row .main,.view.bottab a.main{color:inherit;min-width:0}
+.view.bottab .posbig{overflow-wrap:anywhere;max-width:100%}
+.view.bottab .kv a{max-width:100%;overflow-wrap:anywhere}

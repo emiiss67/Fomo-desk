@@ -1437,8 +1437,8 @@
           })()}</div>
         </div>
         <div class="setrow" id="appver">
-          <div class="sl"><span>App version</span><span class="val">v32</span></div>
-          <div class="s wrap">If this isn’t v32, the phone is still on an old copy. Close the app from the app switcher and reopen it.</div>
+          <div class="sl"><span>App version</span><span class="val">v33</span></div>
+          <div class="s wrap">If this isn’t v33, the phone is still on an old copy. Close the app from the app switcher and reopen it.</div>
         </div>
       </div>
       <div class="grp">Notifications</div>
@@ -1667,7 +1667,7 @@
     } };
   }
 
-  // ---------- v32 Bot tab: the auto-trading bot's own book (bot.json, read-only; actions = Telegram deep links) ----------
+  // ---------- v33 Bot tab: the auto-trading bot's own book (bot.json, read-only; actions = Telegram deep links) ----------
   let botChartPrev = null;
   function botTab() {
     const b = S.bot;
@@ -1700,13 +1700,20 @@
     const d = b.day || {}, lim = b.limits || {};
     const mode = b.mode === "LIVE" ? '<span class="pill redp">LIVE · real SOL</span>' : '<span class="pill paper">DRY · quotes only</span>';
     const onp = b.enabled ? '<span class="pill greenp">ON</span>' : '<span class="pill">OFF</span>';
-    const pos = (b.positions || []).map(p => `<div class="row"><span class="main"><div class="t">${esc(p.name || (p.mint || "").slice(0, 6))} <span class="ter">#${esc(p.id)}</span></div>
-        <div class="s">${esc(sol(p.size_sol))} in · now ${esc(sol(p.value_sol))}${p.status !== "open" ? " · " + esc(p.status) : ""}${p.tp_pct != null ? " · TP +" + esc(p.tp_pct) + "%" : ""}</div>
-        <div class="botbtns botrowbtns">${btn("botsell_" + p.id, "Sell")}${btn("botsellhalf_" + p.id, "Half")}</div></span>
-        <span class="v"><div class="${cls(p.pnl_pct)}">${esc(pctS(p.pnl_pct))}</div><div class="s ${cls(p.pnl_sol)}">${esc(solS(p.pnl_sol))}</div></span></div>`).join("");
-    const trades = (b.trades || []).map(t => `<div class="row"><span class="main"><div class="t">${esc(t.side === "buy" ? "Bought" : "Sold")} ${esc(t.name || (t.mint || "").slice(0, 6))}</div>
-        <div class="s wrap">${esc(vilnius(t.ts ? new Date(t.ts * 1000).toISOString() : null))} · ${esc(t.mode)} · ${esc(t.reason || "")}${t.error ? " · " + esc(t.error) : ""}</div></span>
-        <span class="v"><div>${esc(sol(t.sol))}</div><div class="s ${t.status === "failed" ? "red" : ""}">${esc(t.status)}${t.sig && safeUrl("https://solscan.io/tx/" + t.sig) ? ` · ${ext("https://solscan.io/tx/" + t.sig, "tx")}` : ""}</div></span></div>`).join("");
+    const putIn = p => {
+      const usd = p.cost_usd != null ? money(p.cost_usd) : "—";
+      const s = p.cost_sol != null ? sol(p.cost_sol) : (p.size_sol != null ? sol(p.size_sol) : "—");
+      return usd + " · " + s;
+    };
+    const pos = (b.positions || []).map(p => `<a class="row" href="#/bot/${esc(p.id)}"><span class="main"><div class="t">${esc(p.name || (p.mint || "").slice(0, 6))} <span class="ter">#${esc(p.id)}</span></div>
+        <div class="s">${esc(putIn(p))} in · now ${esc(sol(p.value_sol))}${p.status !== "open" ? " · " + esc(p.status) : ""}${p.tp_pct != null ? " · TP +" + esc(p.tp_pct) + "%" : ""}</div></span>
+        <span class="v"><div class="${cls(p.pnl_pct)}">${esc(pctS(p.pnl_pct))}</div><div class="s ${cls(p.pnl_usd != null ? p.pnl_usd : p.pnl_sol)}">${p.pnl_usd != null ? esc(moneyS(p.pnl_usd)) : esc(solS(p.pnl_sol))}</div></span></a>`).join("");
+    const trades = (b.trades || []).map(t => {
+      const body = `<span class="main"><div class="t">${esc(t.side === "buy" ? "Bought" : t.side === "sell" ? "Sold" : (t.side || "Trade"))} ${esc(t.name || (t.mint || "").slice(0, 6))}</div>
+        <div class="s wrap">${esc(vilnius(typeof t.ts === "number" ? new Date(t.ts * 1000).toISOString() : t.ts))} · ${esc(t.mode || "")} · ${esc(t.reason || "")}${t.error ? " · " + esc(t.error) : ""}</div></span>
+        <span class="v"><div>${t.usd != null ? esc(money(t.usd)) : esc(sol(t.sol))}</div><div class="s ${t.status === "failed" ? "red" : ""}">${esc(t.status || "")}${t.link && safeUrl(t.link) ? ` · ${ext(t.link, "tx")}` : ""}</div></span>`;
+      return t.position_id ? `<a class="row" href="#/bot/${esc(t.position_id)}">${body}</a>` : `<div class="row">${body}</div>`;
+    }).join("");
     const html = navbar() + `<section class="hero glass"><div class="herotop"><span class="ter">Bot wallet</span>${b.mode === "DRY" ? '<span class="pill paper">DRY</span>' : '<span class="pill redp">LIVE</span>'}${b.enabled ? '<span class="pill greenp">ON</span>' : '<span class="pill">OFF</span>'}</div>
        <div class="bigrow"><span class="big glow">${headline != null ? esc(headline) : "—"}</span></div>
        <div class="today"><span class="${today == null ? "sec" : today >= 0 ? "green" : "red"}">${today == null ? "—" : sgn(today)}</span><span class="sec">today</span>
@@ -1743,6 +1750,56 @@
     } };
   }
 
+  function botPosScreen(id) {
+    const b = S.bot;
+    if (!b) return backbar("Bot", "#/bot") + `<div class="gut" style="margin-top:12px">${S.botMissing ? '<div class="list"><div class="empty">The desk hasn’t published bot.json yet</div></div>' : sk(420, null, "border-radius:14px")}</div>`;
+    const p = (b.book || b.positions || []).find(x => String(x.id) === String(id));
+    if (!p) return { html: backbar("Bot", "#/bot") + '<div class="empty" style="padding-top:120px">Not on the bot book</div>', after() {} };
+    const sol = v => v == null ? "—" : Number(v).toFixed(4) + " SOL";
+    const solS = v => v == null ? "—" : (v >= 0 ? "+" : "") + Number(v).toFixed(4) + " SOL";
+    const cls = v => v == null ? "" : v >= 0 ? "green" : "red";
+    const px = v => v == null || !isFinite(v) ? "—" : (v >= 1 ? Number(v).toPrecision(6) : Number(v).toPrecision(4));
+    const kv = (k, v, c) => `<div class="kv"><span class="sec">${k}</span><span class="${c || ""}">${v}</span></div>`;
+    const btn = (pl, label, extra) => { const l = tgLink(pl); return l ? `<a class="mbtn${extra ? " " + extra : ""}" href="${esc(l)}" target="_blank" rel="noopener">${esc(label)}</a>` : ""; };
+    const open = p.status !== "closed";
+    const pnlCls = cls(p.pnl_usd != null ? p.pnl_usd : (p.pnl_pct != null ? p.pnl_pct : p.pnl_sol));
+    const html = backbar("Bot", "#/bot") + `<div class="coinhead">
+        <div class="cname">${logo(p.name || p.mint, null, 48)}<span class="cnm"><span>${esc(p.name || (p.mint || "").slice(0, 4) + "…" + (p.mint || "").slice(-3))}</span>
+          <span class="sec sm">#${esc(p.id)} · ${esc(p.mode || "")} · ${esc(p.status || "")}${p.exit_reason ? " · " + esc(p.exit_reason) : ""}</span></span>
+          ${p.mode === "LIVE" ? '<span class="pill redp">LIVE</span>' : '<span class="pill paper">DRY</span>'}</div>
+      </div>
+      <div class="card glass poscard"><h3>Bot position</h3>
+        <div class="pospnl">
+          <div class="posnow"><div class="posbig">${p.value_usd != null ? esc(money(p.value_usd)) : esc(sol(p.value_sol))}</div><div class="s">${open ? "now" : "exit value"}</div></div>
+          <div class="poschg"><div class="posbig ${pnlCls}">${esc(pctS(p.pnl_pct))}</div><div class="s">${p.pnl_usd != null ? esc(moneyS(p.pnl_usd)) : esc(solS(p.pnl_sol))}</div></div>
+        </div>
+        ${kv("Put in", `${p.cost_usd != null ? esc(money(p.cost_usd)) : "—"} <span class="ter">· ${esc(sol(p.cost_sol))}</span>`)}
+        ${kv("SOL/USD at entry", p.entry_sol_usd == null ? "—" : esc(Number(p.entry_sol_usd).toFixed(2)))}
+        ${kv("P&amp;L", `${p.pnl_usd != null ? esc(moneyS(p.pnl_usd)) : "—"} <span class="ter">· ${esc(solS(p.pnl_sol))}</span>`, pnlCls)}
+        ${kv("Entry price", esc(px(p.entry_price)))}
+        ${kv("Entered", esc(vilnius(p.opened_at)))}
+        ${open ? "" : kv("Exit price", esc(px(p.exit_price)))}
+        ${open ? "" : kv("Exited", esc(vilnius(p.closed_at)) + (p.exit_reason ? " · " + esc(p.exit_reason) : ""))}
+        ${open && p.size_sol != null && p.cost_sol != null && p.size_sol !== p.cost_sol ? kv("Still in", esc(sol(p.size_sol))) : ""}
+        ${p.buy_link && safeUrl(p.buy_link) ? kv("Buy tx", ext(p.buy_link, "Solscan", "link")) : ""}
+        ${(p.sell_links || []).map((u, i) => safeUrl(u) ? kv((p.sell_links.length > 1 ? "Sell tx " + (i + 1) : "Sell tx"), ext(u, "Solscan", "link")) : "").join("")}
+        ${open ? `<div class="botbtns">${btn("botsell_" + p.id, "Sell")}${btn("botsellhalf_" + p.id, "Half")}</div>
+          <div class="s wrap ter" style="margin-top:8px">Opens the desk bot in Telegram. The app never places the trade.</div>` : ""}
+      </div>
+      <div class="chartcard glass" id="botposchart"><div class="chsrc"><span class="srcl">desk prices · entry marked</span></div>
+        <div class="chartwrap" style="position:relative"><canvas id="botcandles"></canvas>${(p.candles || []).length ? "" : '<div class="chartempty">no price data yet</div>'}</div></div>
+      <div class="note mono">${esc(p.mint || "")}</div>
+      <div class="spacer"></div>`;
+    return { html, after() {
+      const cv = document.getElementById("botcandles");
+      if (cv && window.DeskChart) {
+        const list = deskCandles(p.candles || [], 60);
+        DeskChart.candles(cv, list, null, { entryLine: p.entry_price != null ? p.entry_price : null, min: 1,
+          emptyText: (p.candles || []).length ? undefined : "no price data yet" });
+      }
+    } };
+  }
+
   function render() {
     tickOffline();
     if (document.activeElement && document.activeElement.id === "tpin" && route().name === "coin") return;  // typing a TP
@@ -1752,7 +1809,8 @@
     const tabs = [...document.querySelectorAll(".tab")], on = tabs.findIndex(t => t.classList.contains("on")), ind = document.getElementById("tabind");
     if (ind && on >= 0) ind.style.transform = `translateX(${on * 100}%)`;
     if (!BASE) { if (!document.getElementById("gb")) { view.innerHTML = gate(); bindGate(); } document.getElementById("tabbar").hidden = true; return; }
-    const out = r.name === "bot" ? botTab() : r.name === "desk" ? deskTab() : r.name === "agents" ? agentsTab() : r.name === "activity" ? activityTab() : r.name === "account" ? accountTab()
+    const out = r.name === "bot" && r.arg ? botPosScreen(decodeURIComponent(r.arg)) : r.name === "bot" ? botTab()
+      : r.name === "desk" ? deskTab() : r.name === "agents" ? agentsTab() : r.name === "activity" ? activityTab() : r.name === "account" ? accountTab()
       : r.name === "coin" && r.arg ? coinScreen(decodeURIComponent(r.arg)) : r.name === "audit" ? auditScreen(r.arg && decodeURIComponent(r.arg))
       : r.name === "report" && r.arg ? reportScreen(decodeURIComponent(r.arg)) : home();
     const o = typeof out === "string" ? { html: out } : out;
@@ -1785,7 +1843,7 @@
   if ("serviceWorker" in navigator && !LOCAL) {
     let swReload = false;
     navigator.serviceWorker.addEventListener("controllerchange", () => { if (swReload) return; swReload = true; location.reload(); });
-    navigator.serviceWorker.register("sw.js?v=32", { updateViaCache: "none" }).then(reg => { try { reg.update(); } catch (e) {} }).catch(() => {});
+    navigator.serviceWorker.register("sw.js?v=33", { updateViaCache: "none" }).then(reg => { try { reg.update(); } catch (e) {} }).catch(() => {});
   }
   render();
   if (BASE) poll();
