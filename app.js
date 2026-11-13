@@ -1615,8 +1615,8 @@
           })()}</div>
         </div>
         <div class="setrow" id="appver">
-          <div class="sl"><span>App version</span><span class="val">v37</span></div>
-          <div class="s wrap">If this isn’t v37, the phone is still on an old copy. Close the app from the app switcher and reopen it.</div>
+          <div class="sl"><span>App version</span><span class="val">v38</span></div>
+          <div class="s wrap">If this isn’t v38, the phone is still on an old copy. Close the app from the app switcher and reopen it.</div>
         </div>
       </div>
       <div class="grp">Notifications</div>
@@ -1854,16 +1854,43 @@
     const solS = v => v == null ? "—" : (v >= 0 ? "+" : "") + Number(v).toFixed(4) + " SOL";
     const cls = v => v == null ? "" : v >= 0 ? "green" : "red";
     const ch = b.chart || {};
+    const RANGE_ORDER = ["LIVE","1H","4H","1D","1W","ALL"];
     const usdPts = (name) => ((ch.ranges && ch.ranges[name]) || {}).points_usd || [];
     const solPts = (name) => ((ch.ranges && ch.ranges[name]) || {}).points_sol || [];
-    const hasUsd = ["LIVE","1H","4H","1D","1W","ALL"].some(n => usdPts(n).length);
-    const hasSol = ["LIVE","1H","4H","1D","1W","ALL"].some(n => solPts(n).length);
+    const hasUsd = RANGE_ORDER.some(n => usdPts(n).length);
+    const hasSol = RANGE_ORDER.some(n => solPts(n).length);
     if (!S.botUnit) S.botUnit = (usdPts("ALL").length >= 2 && usdPts("ALL").length >= solPts("ALL").length) ? "usd" : "sol";
     if (S.botUnit === "usd" && !hasUsd && hasSol) S.botUnit = "sol";
     const unit = S.botUnit === "usd" ? "usd" : "sol";
     const botRange = S.botRange || "LIVE";
-    const rng = (ch.ranges && ch.ranges[botRange]) || { points_sol: [], points_usd: [], marks: [] };
-    const points = unit === "usd" ? (rng.points_usd || []) : (rng.points_sol || []);
+    const pickRange = (want) => {
+      const start = Math.max(0, RANGE_ORDER.indexOf(want));
+      const tryName = (n) => {
+        const r = (ch.ranges && ch.ranges[n]) || { points_sol: [], points_usd: [], marks: [] };
+        const pts = unit === "usd" ? (r.points_usd || []) : (r.points_sol || []);
+        return pts.length ? { name: n, rng: r, points: pts } : null;
+      };
+      const own = tryName(want);
+      if (own) return { ...own, shown: want, fallback: false };
+      const hinted = ((ch.ranges && ch.ranges[want]) || {}).fallback;
+      const hit = hinted && tryName(hinted);
+      if (hit) return { ...hit, shown: hinted, fallback: true };
+      for (const n of RANGE_ORDER.slice(start + 1)) {
+        const hit2 = tryName(n);
+        if (hit2) return { ...hit2, shown: n, fallback: true };
+      }
+      const empty = (ch.ranges && ch.ranges[want]) || { points_sol: [], points_usd: [], marks: [] };
+      return { name: want, rng: empty, points: [], shown: want, fallback: false };
+    };
+    const viewed = pickRange(botRange);
+    const rng = viewed.rng;
+    const points = viewed.points;
+    const solZ = v => {
+      if (v == null) return "—";
+      const n = Number(v);
+      if (!Number.isFinite(n) || Math.abs(n) < 5e-7) return "0 SOL";
+      return (n > 0 ? "+" : "") + n.toFixed(4).replace(/0+$/, "").replace(/\.$/, "") + " SOL";
+    };
     const start = unit === "usd" ? ch.start_usd : ch.start_sol;
     const today = unit === "usd" ? ch.today_pct_usd : ch.today_pct_sol;
     const mult = unit === "usd" ? ch.multiplier_usd : ch.multiplier_sol;
@@ -1892,19 +1919,26 @@
         <span class="v"><div>${t.usd != null ? esc(money(t.usd)) : esc(sol(t.sol))}</div><div class="s ${t.status === "failed" ? "red" : ""}">${esc(t.status || "")}${t.link && safeUrl(t.link) ? ` · ${ext(t.link, "tx")}` : ""}</div></span>`;
       return t.position_id ? `<a class="row" href="#/bot/${esc(t.position_id)}">${body}</a>` : `<div class="row">${body}</div>`;
     }).join("");
-    const html = navbar() + `<section class="hero glass"><div class="herotop"><span class="ter">Bot wallet</span>${b.mode === "DRY" ? '<span class="pill paper">DRY</span>' : '<span class="pill redp">LIVE</span>'}${b.enabled ? '<span class="pill greenp">ON</span>' : '<span class="pill">OFF</span>'}</div>
+    const todayLine = today == null
+      ? `<span class="sec">Wallet — today</span>`
+      : `<span class="${today >= 0 ? "green" : "red"}">Wallet ${esc(sgn(today))} today</span>`;
+    const chartHint = viewed.fallback
+      ? `<div class="charthint">Showing ${esc(viewed.shown)} · no new ${esc(botRange)} samples</div>`
+      : "";
+    const html = navbar() + `<section class="hero glass"><div class="herotop"><span class="botlabel">Bot wallet</span><span class="heropills">${b.mode === "DRY" ? '<span class="pill paper">DRY</span>' : '<span class="pill redp">LIVE</span>'}${b.enabled ? '<span class="pill greenp">ON</span>' : '<span class="pill">OFF</span>'}</span></div>
        <div class="bigrow"><span class="big glow">${headline != null ? esc(headline) : "—"}</span></div>
-       <div class="today"><span class="${today == null ? "sec" : today >= 0 ? "green" : "red"}">${today == null ? "—" : sgn(today)}</span><span class="sec">today</span>
+       <div class="today">${todayLine}
        ${mult != null ? `<span class="pill mult">${esc(String(mult))}×</span>` : ""}
-       <span class="sec">realized ${esc(solS(b.realized_today_sol))}</span></div>
-      <div class="chartwrap"><canvas id="botline"></canvas>${points.length ? "" : '<div class="chartempty">no data yet</div>'}</div>
-      <div class="ranges">${["LIVE", "1H", "4H", "1D", "1W", "ALL"].map(r => `<button type="button" data-botrange="${r}" class="${r === botRange ? "on" : ""}">${r}</button>`).join("")}</div>
-      ${unitBtns}</section>
+       <span class="sec">· realized ${esc(solZ(b.realized_today_sol))}</span></div>
+      <div class="chartwrap"><canvas id="botline"></canvas>${viewed.fallback ? "" : (points.length ? "" : '<div class="chartempty">no data yet</div>')}</div>
+      <div class="ranges">${RANGE_ORDER.map(r => `<button type="button" data-botrange="${r}" class="${r === botRange ? "on" : ""}">${r}</button>`).join("")}</div>
+      ${chartHint}${unitBtns}</section>
       <div class="card"><h3>Auto-trading bot</h3>
         <div class="kv"><span>${onp} ${mode}</span><span class="ter">${b.killing ? "killing…" : ""}</span></div>
         ${kv("Wallet SOL", esc(sol(b.sol_balance)))}
         ${b.mode === "DRY" ? kv("DRY book start", esc(sol(b.dry_start_sol))) : ""}
-        ${kv("Today", `${esc(pctS(d.loss_pct == null ? null : -d.loss_pct))} · realized ${esc(solS(b.realized_today_sol))}`, cls(d.loss_pct == null ? null : -d.loss_pct))}
+        ${kv("Wallet today", esc(pctS(d.loss_pct == null ? null : -d.loss_pct)), cls(d.loss_pct == null ? null : -d.loss_pct))}
+        ${kv("Realized today", esc(solZ(b.realized_today_sol)), cls(b.realized_today_sol))}
         ${kv("Daily stop", d.stopped ? '<span class="red">HIT · no buys until 00:00</span>' : "ok · at -" + esc(lim.daily_stop_pct) + "%")}
         ${kv("Total realized", `${esc(solS(b.total_pnl_sol))} · ${esc(b.wins)}/${esc(b.closed)} wins`, cls(b.total_pnl_sol))}
         ${kv("Per trade", "up to " + esc(lim.max_trade_pct) + "% · " + esc(lim.reserve_sol) + " SOL kept for fees")}
