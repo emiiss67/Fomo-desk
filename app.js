@@ -822,13 +822,13 @@
     const coin = c.coin
       ? `${logo(c.coin.name || c.coin.mint, c.coin.logo, 22)}<span class="mixticker">${esc(c.coin.name)}</span>${pill}`
       : `<span class="ter">no fill yet</span>`;
-    const st = c.status === "unavailable" ? "unavailable" : c.status === "active" ? "active" : "idle";
-    const scan = c.available
-      ? `Scanning ${c.scanning || 0} pair${c.scanning === 1 ? "" : "s"}`
+    const st = c.status === "feed_down" ? "feed_down" : c.status === "unavailable" ? "unavailable" : c.status === "active" ? "active" : "idle";
+    const scan = st === "feed_down" ? (c.note || "Feed down")
+      : c.available ? `Scanning ${c.scanning || 0} pair${c.scanning === 1 ? "" : "s"}`
       : (c.note || "Unavailable");
     const pnl = c.pnl_usd == null ? "—" : money(c.pnl_usd);
     const inner = `<div class="mixhead">${MIX_ICON[c.id] || ""}<div class="mixtit"><div class="t">${esc(c.name)}</div><div class="s wrap">${esc(c.subtitle)}</div></div></div>
-      <div class="mixscan"><i class="live ${st === "active" ? "running" : st === "unavailable" ? "paused" : ""}"></i><span class="s wrap">${esc(scan)}</span><span class="mixst ${st}">${esc(st)}</span></div>
+      <div class="mixscan"><i class="live ${st === "active" ? "running" : (st === "unavailable" || st === "feed_down") ? "paused" : ""}"></i><span class="s wrap">${esc(scan)}</span><span class="mixst ${st}">${esc(st === "feed_down" ? "feed down" : st)}</span></div>
       <div class="mixcoin">${coin}</div>
       <div class="mixchart">${mixSpark(c.chart, 140, 36) || '<span class="ter">—</span>'}</div>
       <div class="mixfoot"><span>${c.wins || 0}W · ${c.losses || 0}L</span><span class="${(c.pnl_usd || 0) >= 0 ? "green" : "red"}">${esc(pnl)}</span></div>`;
@@ -1481,8 +1481,8 @@
           })()}</div>
         </div>
         <div class="setrow" id="appver">
-          <div class="sl"><span>App version</span><span class="val">v34</span></div>
-          <div class="s wrap">If this isn’t v34, the phone is still on an old copy. Close the app from the app switcher and reopen it.</div>
+          <div class="sl"><span>App version</span><span class="val">v35</span></div>
+          <div class="s wrap">If this isn’t v35, the phone is still on an old copy. Close the app from the app switcher and reopen it.</div>
         </div>
       </div>
       <div class="grp">Notifications</div>
@@ -1887,7 +1887,7 @@
   if ("serviceWorker" in navigator && !LOCAL) {
     let swReload = false;
     navigator.serviceWorker.addEventListener("controllerchange", () => { if (swReload) return; swReload = true; location.reload(); });
-    navigator.serviceWorker.register("sw.js?v=34", { updateViaCache: "none" }).then(reg => { try { reg.update(); } catch (e) {} }).catch(() => {});
+    navigator.serviceWorker.register("sw.js?v=35", { updateViaCache: "none" }).then(reg => { try { reg.update(); } catch (e) {} }).catch(() => {});
   }
   render();
   if (BASE) poll();

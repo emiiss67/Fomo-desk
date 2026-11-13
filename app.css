@@ -1170,6 +1170,7 @@ a.mixcard{color:inherit}
 .mixst.active{color:var(--green)}
 .mixst.idle{color:var(--sec)}
 .mixst.unavailable{color:var(--orange)}
+.mixst.feed_down{color:var(--orange)}
 .mixcoin{display:flex;align-items:center;gap:6px;min-width:0;max-width:100%}
 .mixcoin .lg{width:22px;height:22px;flex:0 0 22px}
 .mixticker{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:600;font-size:12px}
