@@ -51,6 +51,7 @@ button{font:inherit;color:inherit;background:none;border:0;padding:0;cursor:poin
 .pill.mult{background:rgba(0,211,90,.18);color:var(--green)}
 .pill.mono{font-family:var(--mono);font-weight:500}
 .pill.redp{background:rgba(255,69,58,.18);color:var(--red)}
+.pill.stale{background:rgba(255,159,10,.18);color:var(--orange)}
 .pill.greenp{background:rgba(0,211,90,.18);color:var(--green)}
 .today{font-size:17px;margin-top:4px;display:flex;gap:10px;align-items:center}
 

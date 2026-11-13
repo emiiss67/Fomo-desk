@@ -864,12 +864,14 @@
     const mixOn = !!(S.state && S.state.mix && S.state.mix.active) && !missesOn;
     const mixBoard = mixOn ? `<div class="mixgrid">${(mixCards() || []).map(mixCard).join("")}</div>` : "";
     const html = navbar(S.showSearch ? `<div class="search"><input id="q" type="search" placeholder="Name, symbol or mint" value="${esc(S.search)}" autocomplete="off" autocapitalize="off"></div><div class="results">${results}</div>` : "") +
-      `<section class="hero glass"><div class="herotop"><span class="ter">${esc(mixOn ? "Mix" : heroLabel)}</span>${book === "PAPER" ? '<span class="pill paper">PAPER</span>' : book === "LIVE" ? '<span class="pill redp">LIVE</span>' : ""}</div>
+      `<section class="hero glass"><div class="herotop"><span class="ter">${esc(mixOn ? "Mix" : heroLabel)}</span>${book === "PAPER" ? '<span class="pill paper">PAPER</span>' : book === "LIVE" ? '<span class="pill redp">LIVE</span>' : ""}${book === "LIVE" && (bk.wallet && bk.wallet.stale) ? '<span class="pill stale">sync stale</span>' : ""}</div>
        ${bookseg}
        ${mixOn ? mixBoard : heroBody}
       <div class="achips">${st.agents.map(a => `<a class="achip" href="#/agents"><i class="live ${esc(a.paused ? "paused" : a.status)}"></i>${TITLE[a.name]}</a>`).join("")}</div></section>
-      ${missesOn ? "" : `<div class="sh"><h2>Open positions</h2><span class="ter sm">${openPositions().length || ""}</span></div>
-      <div class="list glass">${openPositions().length ? openPositions().map(posRow).join("") : '<div class="empty">No open positions</div>'}</div>`}
+      ${missesOn ? "" : (book === "LIVE" ? `<div class="sh"><h2>Holdings</h2><span class="ter sm">${((bk.wallet && bk.wallet.holdings) || []).length || ""}</span></div>
+      <div class="list glass">${((bk.wallet && bk.wallet.holdings) || []).length ? (bk.wallet.holdings).map(holdRow).join("") : `<div class="empty">${bk.wallet && bk.wallet.stale ? "Wallet sync stale" : "No holdings over $1"}</div>`}</div>`
+        : `<div class="sh"><h2>Open positions</h2><span class="ter sm">${openPositions().length || ""}</span></div>
+      <div class="list glass">${openPositions().length ? openPositions().map(posRow).join("") : '<div class="empty">No open positions</div>'}</div>`)}
       <div class="sh"><h2>Agents · ${st.running} running</h2></div>
       <div class="carousel">${st.agents.map(agentCard).join("")}</div>
       <div class="sh"><h2>New coins</h2><span class="ter sm">${(st.new_coins || []).length ? "live" : ""}${(st.new_coins || []).length ? '<i class="live running" style="margin-left:6px"></i>' : ""}</span></div>
@@ -888,7 +890,26 @@
       afterCards();
     } };
   }
+  function holdAmt(v) {
+    if (v == null || !isFinite(Number(v))) return "—";
+    const n = Number(v);
+    if (Math.abs(n) >= 1000) return n.toLocaleString("en-US", { maximumFractionDigits: 2 });
+    if (Math.abs(n) >= 1) return n.toLocaleString("en-US", { maximumFractionDigits: 4 });
+    return String(Number(n.toPrecision(4)));
+  }
+  function holdRow(h) {
+    const name = h.name || h.symbol || h.mint || "—";
+    const amt = holdAmt(h.amount) + (h.symbol ? " " + h.symbol : "");
+    const usd = h.usd == null ? "—" : money(h.usd);
+    const sub = amt + " · " + usd + (h.usd == null ? " · no price" : "");
+    const pnl = h.pnl_pct;
+    const inner = `${logo(name, h.logo, 40)}<span class="main"><div class="t">${esc(name)}</div>
+      <div class="s wrap">${esc(sub)}</div></span>
+      <span class="v">${pnl == null ? '<span class="ter">—</span>' : `<span class="cpill ${pnl >= 0 ? "up" : "down"}">${sgn(pnl, 1)}</span>`}</span>`;
+    return (h.mint && h.mint !== "SOL") ? `<a class="row" href="${coinHref(h.mint)}">${inner}</a>` : `<div class="row">${inner}</div>`;
+  }
   function missRow(m) {
+
     const after = m.afterwardsPct, paper = m.paper;
     let paperTxt = "no PAPER fill";
     if (paper) {
@@ -1481,8 +1502,8 @@
           })()}</div>
         </div>
         <div class="setrow" id="appver">
-          <div class="sl"><span>App version</span><span class="val">v35</span></div>
-          <div class="s wrap">If this isn’t v35, the phone is still on an old copy. Close the app from the app switcher and reopen it.</div>
+          <div class="sl"><span>App version</span><span class="val">v36</span></div>
+          <div class="s wrap">If this isn’t v36, the phone is still on an old copy. Close the app from the app switcher and reopen it.</div>
         </div>
       </div>
       <div class="grp">Notifications</div>
@@ -1887,7 +1908,7 @@
   if ("serviceWorker" in navigator && !LOCAL) {
     let swReload = false;
     navigator.serviceWorker.addEventListener("controllerchange", () => { if (swReload) return; swReload = true; location.reload(); });
-    navigator.serviceWorker.register("sw.js?v=35", { updateViaCache: "none" }).then(reg => { try { reg.update(); } catch (e) {} }).catch(() => {});
+    navigator.serviceWorker.register("sw.js?v=36", { updateViaCache: "none" }).then(reg => { try { reg.update(); } catch (e) {} }).catch(() => {});
   }
   render();
   if (BASE) poll();
