@@ -1615,8 +1615,8 @@
           })()}</div>
         </div>
         <div class="setrow" id="appver">
-          <div class="sl"><span>App version</span><span class="val">v38</span></div>
-          <div class="s wrap">If this isn’t v38, the phone is still on an old copy. Close the app from the app switcher and reopen it.</div>
+          <div class="sl"><span>App version</span><span class="val">v39</span></div>
+          <div class="s wrap">If this isn’t v39, the phone is still on an old copy. Close the app from the app switcher and reopen it.</div>
         </div>
       </div>
       <div class="grp">Notifications</div>
@@ -1710,6 +1710,38 @@
     return `<div class="gut"><div class="seg wide dseg" id="dseg" role="tablist">${[["strategy","Strategy"],["pnl","PnL"],["journal","Journal"],["settings","Settings"]]
       .map(([k, l]) => `<button type="button" data-dt="${k}" class="${cur === k ? "on" : ""}">${l}</button>`).join("")}</div></div>`;
   }
+  function learningCard(d) {
+    const L = d.learning || {};
+    const on = L.enabled !== false;
+    const c = L.counts || {};
+    const last = L.last_run;
+    const closed = c.n_closed || 0;
+    const parts = [];
+    if (c.n_paper) parts.push(c.n_paper + " PAPER");
+    if (c.n_live) parts.push(c.n_live + " LIVE");
+    if (c.n_bot) parts.push(c.n_bot + " bot");
+    const data = closed + " closed" + (parts.length ? " (" + parts.join(", ") + ")" : "")
+      + " · " + (c.n_pumped || 0) + " pumped misses / " + (c.n_misses || 0) + " with a later price";
+    const applied = L.applied || [];
+    const hist = L.history || [];
+    const need = L.min_sample || 20;
+    const buckets = (L.buckets || []).filter(b => b.n >= 5).slice(0, 8);
+    const changes = (applied.length ? applied : hist.slice(0, 4)).map(a =>
+      `<div class="row"><span class="main"><div class="t">${esc(a.key)}</div><div class="s wrap">${esc(String(a.old))} → ${esc(String(a.new))} · ${esc(a.why || "")}${a.n ? " · n=" + esc(a.n) : ""}</div></span></div>`
+    ).join("");
+    const btxt = buckets.map(b => `<span class="chipv">${esc(b.dim)} ${esc(b.key)} n=${esc(b.n)} · ${b.win_rate == null ? "—" : esc(b.win_rate) + "% wr"} · ${b.expectancy == null ? "—" : esc(b.expectancy) + "%"}</span>`).join("");
+    const when = last && last.ts ? vilnius(last.ts) + " Europe/Vilnius" : "no run yet";
+    const btn = (pl, label) => { const l = tgLink(pl); return l ? `<a class="mbtn${pl === "learn_off" ? " ghost" : ""}" href="${esc(l)}" target="_blank" rel="noopener">${esc(label)}</a>` : ""; };
+    return `<div class="sh"><h2>Learning</h2><span class="pill ${on ? "greenp" : ""}">${on ? "ON" : "OFF"}</span></div>
+      <div class="card learncard">
+        <div class="s wrap">${esc(data)}. A bucket needs ≥${esc(need)} closed trades before a knob can move. Hard checks, the $1M cap, bot limits and withdraw rules stay put.</div>
+        <div class="s wrap ter" style="margin-top:6px">Last run: ${esc(when)}${last && last.reason ? " · " + esc(last.reason) : ""}${last && last.error ? " · error, last good settings kept" : ""}</div>
+        ${btxt ? `<div class="stv" style="margin-top:8px">${btxt}</div>` : `<div class="s wrap" style="margin-top:8px">No feature bucket has 5+ trades with a known value yet (Mix fills are not tagged in the older book).</div>`}
+        <div class="s" style="margin-top:10px;font-weight:650">${applied.length ? "What changed" : (hist.length ? "Recent changes" : "What changed")}</div>
+        <div class="list" style="margin-top:6px">${changes || '<div class="row"><span class="main"><div class="s">No automatic changes yet.</div></span></div>'}</div>
+        <div class="botbtns" style="margin-top:10px">${on ? btn("learn_off", "Turn off") : btn("learn_on", "Turn on")}${btn("learn", "Status")}${btn("learn_reset", "Reset defaults")}</div>
+      </div>`;
+  }
   function strategyView(d) {
     const st = d.strategy || {}, v = st.values || {};
     const fmtV = (k, x) => x == null ? "—" : k === "scanner.min_volume_h1_usd" ? "$" + Number(x).toLocaleString("en-US") + " 1h vol"
@@ -1723,7 +1755,7 @@
         ${on ? "" : link ? `<a class="mbtn" href="${esc(link)}" target="_blank" rel="noopener">Switch to ${esc(p.label)}</a>` : ""}</div>`;
     };
     const ls = st.last_switch;
-    return `<div class="sh"><h2>Strategy</h2><span class="sec">${esc(st.label || "—")}</span></div>
+    return learningCard(d) + `<div class="sh"><h2>Strategy</h2><span class="sec">${esc(st.label || "—")}</span></div>
       <div class="gut stlist">${(st.presets || []).map(card).join("")}</div>
       <div class="list"><div class="row"><span class="main"><div class="t">Now</div><div class="s wrap">${Object.entries(v).map(([k, x]) => esc(fmtV(k, x))).join(" · ")}</div></span></div>
       ${ls ? `<div class="row"><span class="main"><div class="t">Last switch</div><div class="s">${esc(ls.old || "?")} → ${esc(ls.new)} · ${esc(vilnius(ls.ts))} (Europe/Vilnius)</div></span></div>` : ""}</div>
@@ -1783,10 +1815,10 @@
         <div class="s wrap ter">${esc(r.entry_reason || "")}${r.source ? " · " + esc(r.source) : ""}${r.chain ? " · " + esc(r.chain) : ""}</div>
         <div class="stv">${(r.tags || []).map(t => `<span class="pill ${tagCls(t)}">${esc(t)}</span>`).join("")}</div></span>
         <span class="v ${r.pnl_usd >= 0 ? "green" : "red"}">${moneyS(r.pnl_usd)}<div class="s ${r.pnl_usd >= 0 ? "green" : "red"}" style="text-align:right">${pctS(r.pnl_pct)}</div></span></div>`;
-    return `<div class="sh"><h2>What the desk learned</h2></div>${lesson}
+    return learningCard(d) + `<div class="sh"><h2>What the desk learned</h2></div>${lesson}
       <div class="sh"><h2>Journal</h2><span class="sec">${jr.length} trades</span></div>
       <div class="list">${jr.length ? jr.map(row).join("") : '<div class="empty">No closed trades yet</div>'}</div>
-      <div class="gut s wrap" style="margin-top:10px">Only small, capped changes are automatic (analyst score weights, ±0.05 a night, 0.5–1.5). Scam checks, ticket size and PAPER/LIVE are never touched. Telegram: journal · lessons.</div>`;
+      <div class="gut s wrap" style="margin-top:10px">The Learning card above is the live loop (every 6h and at the morning report). Only soft knobs move, in small steps, with ≥20 trades in a bucket, and they decay toward the defaults. Scam checks, the $1M cap, ticket size, bot limits and PAPER/LIVE are never touched. Telegram: learn · learn off · learn reset · journal · lessons.</div>`;
   }
   function settingsView(d) {
     const h = d.health || {}, st = d.settings || {}, g = d.live_gate || {}, wd = h.watchdog;

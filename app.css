@@ -1221,3 +1221,10 @@ canvas.linedrag{cursor:ns-resize}
   .botbtns .mbtn{flex:1 1 calc(50% - 8px)}
   .ranges{flex-wrap:wrap}
 }
+
+/* v39: Learning card on the Desk tab */
+.learncard{margin:0 var(--g) 0;padding:14px}
+.learncard .stv{display:flex;flex-wrap:wrap;gap:6px}
+.learncard .chipv{display:inline-block;background:var(--card2);border-radius:10px;padding:4px 8px;font-size:12px;max-width:100%;overflow-wrap:anywhere}
+.learncard .list{margin:0;box-shadow:none}
+.learncard .botbtns .mbtn.ghost{background:var(--card2);color:var(--text)}
