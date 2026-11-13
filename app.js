@@ -793,7 +793,49 @@
     }).join("");
   }
 
+  function mixCards() {
+    const mix = (S.state && S.state.mix) || {};
+    if (!mix.active) return null;
+    const book = activeBook() === "misses" ? ((S.state.paper) ? "PAPER" : "LIVE") : (activeBook() || "LIVE");
+    const snap = (mix.books && mix.books[book]) || {};
+    return snap.cards || [];
+  }
+  const MIX_ICON = {
+    sniper: '<svg viewBox="0 0 24 24" class="mixico"><circle cx="12" cy="12" r="8"/><circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3"/></svg>',
+    whale: '<svg viewBox="0 0 24 24" class="mixico"><path d="M3 14c2-6 7-8 11-7 3 .6 5 3 6 5 2 0 3 2 2 3h-3c-1 3-4 5-8 5-4 0-7-2-8-6z"/><circle cx="8" cy="12" r="1.2"/></svg>',
+    momentum: '<svg viewBox="0 0 24 24" class="mixico"><path d="M4 16l5-5 4 3 7-8"/><path d="M14 6h6v6"/></svg>',
+    dip: '<svg viewBox="0 0 24 24" class="mixico"><path d="M3 8c4 0 5 10 9 10s5-10 9-10"/><path d="M12 18v4M9 20h6"/></svg>'
+  };
+  function mixSpark(pts, w, h) {
+    if (!pts || pts.length < 2) return "";
+    const vs = pts.map(p => Number(p.v)).filter(v => isFinite(v));
+    if (vs.length < 2) return "";
+    const mn = Math.min(...vs), mx = Math.max(...vs), span = mx - mn || 1;
+    const step = (w - 2) / (vs.length - 1);
+    const d = vs.map((v, i) => `${i === 0 ? "M" : "L"}${(1 + i * step).toFixed(1)},${(h - 1 - (v - mn) / span * (h - 2)).toFixed(1)}`).join(" ");
+    const up = vs[vs.length - 1] >= vs[0];
+    return `<svg class="mixspark" viewBox="0 0 ${w} ${h}" preserveAspectRatio="none"><path d="${d}" fill="none" stroke="${up ? "var(--green)" : "var(--red)"}" stroke-width="1.5"/></svg>`;
+  }
+  function mixCard(c) {
+    const href = c.coin && c.coin.mint ? coinHref(c.coin.mint) : null;
+    const pill = c.pnl_pct == null ? "" : `<span class="cpill ${c.pnl_pct >= 0 ? "up" : "down"}">${sgn(c.pnl_pct, 1)}</span>`;
+    const coin = c.coin
+      ? `${logo(c.coin.name || c.coin.mint, c.coin.logo, 22)}<span class="mixticker">${esc(c.coin.name)}</span>${pill}`
+      : `<span class="ter">no fill yet</span>`;
+    const st = c.status === "unavailable" ? "unavailable" : c.status === "active" ? "active" : "idle";
+    const scan = c.available
+      ? `Scanning ${c.scanning || 0} pair${c.scanning === 1 ? "" : "s"}`
+      : (c.note || "Unavailable");
+    const pnl = c.pnl_usd == null ? "—" : money(c.pnl_usd);
+    const inner = `<div class="mixhead">${MIX_ICON[c.id] || ""}<div class="mixtit"><div class="t">${esc(c.name)}</div><div class="s wrap">${esc(c.subtitle)}</div></div></div>
+      <div class="mixscan"><i class="live ${st === "active" ? "running" : st === "unavailable" ? "paused" : ""}"></i><span class="s wrap">${esc(scan)}</span><span class="mixst ${st}">${esc(st)}</span></div>
+      <div class="mixcoin">${coin}</div>
+      <div class="mixchart">${mixSpark(c.chart, 140, 36) || '<span class="ter">—</span>'}</div>
+      <div class="mixfoot"><span>${c.wins || 0}W · ${c.losses || 0}L</span><span class="${(c.pnl_usd || 0) >= 0 ? "green" : "red"}">${esc(pnl)}</span></div>`;
+    return href ? `<a class="mixcard glass" href="${href}">${inner}</a>` : `<div class="mixcard glass">${inner}</div>`;
+  }
   function home() {
+
     if (!S.state) return loadingHome();
     const st = S.state, book = activeBook(), missesOn = book === "misses", bk = bookSnap() || {};
     const bal = missesOn ? (st.misses || []).length : (bk.balance != null ? bk.balance : st.balance);
@@ -819,10 +861,12 @@
          ${mult != null ? `<span class="pill mult">${Number(mult).toFixed(2)}×</span>` : ""}${unpriced ? `<span class="ter">${unpriced} position${unpriced > 1 ? "s" : ""} not priced yet</span>` : ""}</div>
         <div class="chartwrap"><canvas id="line"></canvas>${rng.points.length ? "" : `<div class="chartempty">${book === "LIVE" && st.paper ? "no LIVE data yet" : "Waiting for the first trade"}</div>`}</div>
         <div class="ranges">${["LIVE", "1H", "4H", "1D", "1W", "ALL"].map(r => `<button data-range="${r}" class="${r === S.range ? "on" : ""}">${r}</button>`).join("")}</div>`;
+    const mixOn = !!(S.state && S.state.mix && S.state.mix.active) && !missesOn;
+    const mixBoard = mixOn ? `<div class="mixgrid">${(mixCards() || []).map(mixCard).join("")}</div>` : "";
     const html = navbar(S.showSearch ? `<div class="search"><input id="q" type="search" placeholder="Name, symbol or mint" value="${esc(S.search)}" autocomplete="off" autocapitalize="off"></div><div class="results">${results}</div>` : "") +
-      `<section class="hero glass"><div class="herotop"><span class="ter">${esc(heroLabel)}</span>${book === "PAPER" ? '<span class="pill paper">PAPER</span>' : book === "LIVE" ? '<span class="pill redp">LIVE</span>' : ""}</div>
+      `<section class="hero glass"><div class="herotop"><span class="ter">${esc(mixOn ? "Mix" : heroLabel)}</span>${book === "PAPER" ? '<span class="pill paper">PAPER</span>' : book === "LIVE" ? '<span class="pill redp">LIVE</span>' : ""}</div>
        ${bookseg}
-       ${heroBody}
+       ${mixOn ? mixBoard : heroBody}
       <div class="achips">${st.agents.map(a => `<a class="achip" href="#/agents"><i class="live ${esc(a.paused ? "paused" : a.status)}"></i>${TITLE[a.name]}</a>`).join("")}</div></section>
       ${missesOn ? "" : `<div class="sh"><h2>Open positions</h2><span class="ter sm">${openPositions().length || ""}</span></div>
       <div class="list glass">${openPositions().length ? openPositions().map(posRow).join("") : '<div class="empty">No open positions</div>'}</div>`}
@@ -1437,8 +1481,8 @@
           })()}</div>
         </div>
         <div class="setrow" id="appver">
-          <div class="sl"><span>App version</span><span class="val">v33</span></div>
-          <div class="s wrap">If this isn’t v33, the phone is still on an old copy. Close the app from the app switcher and reopen it.</div>
+          <div class="sl"><span>App version</span><span class="val">v34</span></div>
+          <div class="s wrap">If this isn’t v34, the phone is still on an old copy. Close the app from the app switcher and reopen it.</div>
         </div>
       </div>
       <div class="grp">Notifications</div>
@@ -1843,7 +1887,7 @@
   if ("serviceWorker" in navigator && !LOCAL) {
     let swReload = false;
     navigator.serviceWorker.addEventListener("controllerchange", () => { if (swReload) return; swReload = true; location.reload(); });
-    navigator.serviceWorker.register("sw.js?v=33", { updateViaCache: "none" }).then(reg => { try { reg.update(); } catch (e) {} }).catch(() => {});
+    navigator.serviceWorker.register("sw.js?v=34", { updateViaCache: "none" }).then(reg => { try { reg.update(); } catch (e) {} }).catch(() => {});
   }
   render();
   if (BASE) poll();
