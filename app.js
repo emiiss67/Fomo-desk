@@ -7,7 +7,7 @@
   const QS = new URLSearchParams(location.search);
   const FIXTURE = LOCAL ? QS.get("fixture") : null;          // local screenshots only
   const POLL_VISIBLE_S = 2, POLL_HIDDEN_S = 15, POLL_S = POLL_VISIBLE_S, MAX_BACKOFF = 60;
-  const APP_VERSION = "v42";   // bump with every app release (also index.html ?v= and sw.js CACHE)
+  const APP_VERSION = "v43";   // bump with every app release (also index.html ?v= and sw.js CACHE)
   const AGENTS = ["scanner", "auditor", "analyst", "executor", "risk"];
   const TITLE = { scanner: "Scanner", auditor: "Auditor", analyst: "Analyst", executor: "Executor", risk: "Risk" };
   const COLOR = { scanner: "cyan", auditor: "", analyst: "yellow", executor: "green", risk: "pink" };
@@ -473,7 +473,7 @@
     const feeLab = m.afterFees ? "after fees" : "before fees";
     const key = (mint || "pos") + (p.open ? "o" : "x");
     return `<div class="pospnl">
-      <div class="posnow"><div class="posbig">${tick("pv" + key, m.now, money)}</div><div class="s">now</div></div>
+      <div class="posnow"><div class="posbig">${tick("pv" + key, m.now, money)}</div><div class="s">${p.open ? "now" : "got back"}</div></div>
       <div class="poschg"><div class="posbig ${cls}">${tick("pp" + key, m.pct, v => sgn(v, 2))}</div><div class="s">${feeLab}</div></div>
     </div>
     <div class="kv"><span class="sec">Put in</span><span>${money(p.sizeUsd)}</span></div>
@@ -1404,9 +1404,21 @@
   // body shows the move (both are real prices). Minutes with no sample are filled as flat dashes out to now.
   function deskCandles(list, step) {
     const one = []; let prev = null;
-    (list || []).forEach(c => { if (c.c == null) return; const t = typeof c.t === "number" ? c.t : Date.parse(c.t) / 1000;
+    const buck = (step && step > 0) ? step : 60;
+    (list || []).forEach(c => { if (c.c == null) return; const raw = typeof c.t === "number" ? c.t : Date.parse(c.t) / 1000;
+      if (!isFinite(raw)) return;
+      const t = Math.floor(raw / Math.min(buck, 60)) * Math.min(buck, 60);
       const o = prev != null && c.o === c.c ? prev : c.o;
-      one.push({ t, o, h: Math.max(c.h, o), l: Math.min(c.l, o), c: c.c, vol: c.vol }); prev = c.c; });
+      const last = one.length ? one[one.length - 1] : null;
+      if (last && last.t === t) {
+        last.h = Math.max(last.h, c.h, o, c.c);
+        last.l = Math.min(last.l, c.l, o, c.c);
+        last.c = c.c;
+        if (c.vol > 0) last.vol = (last.vol || 0) + c.vol;
+      } else {
+        one.push({ t, o, h: Math.max(c.h, o), l: Math.min(c.l, o), c: c.c, vol: c.vol });
+      }
+      prev = c.c; });
     if (!step || step <= 60) return one;
     const out = [];                                                    // aggregate 1m desk candles into the chosen timeframe
     one.forEach(c => { const b = Math.floor(c.t / step) * step, last = out[out.length - 1];
@@ -1415,10 +1427,35 @@
       else out.push({ t: b, o: c.o, h: c.h, l: c.l, c: c.c, vol: c.vol > 0 ? c.vol : 0 }); });
     return out;
   }
-  function mergeCandles(gt, desk) {
+  function mergeCandles(gt, desk, step) {
+    step = step || 60;
+    const bucket = t => Math.floor(Number(t) / step) * step;
     const map = new Map();
-    (desk || []).forEach(c => { if (c && c.t) map.set(c.t, Object.assign({}, c)); });
-    (gt || []).forEach(c => { if (c && c.t) map.set(c.t, Object.assign({}, c)); });
+    const ingest = (c, fromDesk) => {
+      if (!c || c.t == null || !isFinite(c.t) || c.c == null) return;
+      const t = bucket(c.t);
+      const prev = map.get(t);
+      if (!prev) { map.set(t, Object.assign({}, c, { t, desk: !!fromDesk })); return; }
+      prev.h = Math.max(prev.h, c.h, c.c);
+      prev.l = Math.min(prev.l, c.l, c.c);
+      if (c.vol > 0) prev.vol = (prev.vol || 0) + c.vol;
+      if (fromDesk) prev.desk = true;
+    };
+    (gt || []).forEach(c => ingest(c, false));
+    (desk || []).forEach(c => ingest(c, true));
+    // Latest desk tick updates the close of the current (partial) minute only.
+    if (desk && desk.length) {
+      const last = [...desk].reverse().find(c => c && c.c != null && isFinite(c.t));
+      if (last) {
+        const t = bucket(last.t);
+        const prev = map.get(t) || Object.assign({}, last, { t });
+        prev.c = last.c;
+        prev.h = Math.max(prev.h, last.c);
+        prev.l = Math.min(prev.l, last.c);
+        if (last.px != null) prev.px = last.px;
+        map.set(t, prev);
+      }
+    }
     return [...map.values()].sort((a, b) => a.t - b.t);
   }
   const dash = v => v == null ? "—" : v;
@@ -1464,9 +1501,18 @@
     if (!c) return loading;
     const p = c.position, x = c.exit;
     const chipOk = chipCleared(c.audit_chip);
-    const since = p && p.since_entry_pct;
+    const open = !!(p && p.open);
     const left = x ? `${Math.floor(x.timeout_left_s / 3600)}h ${Math.floor(x.timeout_left_s % 3600 / 60)}m` : null;
-    const chg = since != null ? [since, "since entry"] : c.stats.change24h != null ? [c.stats.change24h, "24h"] : c.stats.change1h != null ? [c.stats.change1h, "1h"] : null;
+    const sold = p && !open ? soldAt(p.closed_at) : "";
+    const reason = p && !open ? (p.exitReason || "").trim() : "";
+    const closedMark = p && !open ? posMark(p, mint, c) : null;
+    const chg = (open && p.since_entry_pct != null) ? [p.since_entry_pct, "since entry"]
+      : (p && !open && closedMark && closedMark.pct != null) ? [closedMark.pct, "sold"]
+      : c.stats.change24h != null ? [c.stats.change24h, "24h"] : c.stats.change1h != null ? [c.stats.change1h, "1h"] : null;
+    const closedPill = (p && !open)
+      ? `<span class="pill closedp">Closed${sold ? " · sold " + esc(sold) : ""}${reason ? " · " + esc(reason) : ""}</span>`
+      : "";
+    const chgLabel = chg ? (chg[1] === "sold" ? "sold" : chg[1]) : "";
     const IC = { mc: '<path d="M4 19V9m5 10V5m5 14v-7m5 7V3"/>', liq: '<path d="M12 3s6 6.5 6 11a6 6 0 0 1-12 0c0-4.5 6-11 6-11z"/>',
       vol: '<path d="M3 17l5-5 4 4 8-9"/><path d="M15 7h5v5"/>', hold: '<circle cx="9" cy="8" r="3"/><path d="M3 20c0-3.3 2.7-6 6-6s6 2.7 6 6"/><path d="M16 4a3 3 0 0 1 0 6m2 4c2 .7 3 2.6 3 6"/>',
       v1: '<circle cx="12" cy="12" r="8"/><path d="M12 8v4l3 2"/>', bs: '<path d="M7 17V7l-3 3m3-3 3 3M17 7v10l-3-3m3 3 3-3"/>' };
@@ -1487,7 +1533,8 @@
           <span class="sec sm">${esc(c.symbol || "")} · ${esc(c.chain)} · ${coinAgeLabel(c)}</span></span>
           ${c.audit_chip ? `<a href="#/audit/${encodeURIComponent(mint)}" class="chip ${chipOk ? "ok" : "bad"}">🛡 ${esc(c.audit_chip)}</a>` : ""}</div>
         <button type="button" class="pricerow" id="pricetog" aria-pressed="${mcOn}" aria-label="${mcOn ? "Show token price" : "Show market cap"}"><span class="big pricebig glow">${mcOn ? tick("m" + mint, fac == null ? null : (livePrice(mint, c) == null ? null : livePrice(mint, c) * fac), v => v == null ? "n/a" : kfmt(v)) : tick("p" + mint, livePrice(mint, c), price)}</span>${mcOn ? `<span class="ter sm mclbl">MC</span>` : ""}
-          ${chg ? `<span class="cpill lg2 ${chg[0] >= 0 ? "up" : "down"}">${chg[0] >= 0 ? "▲" : "▼"} ${Math.abs(chg[0]).toFixed(chg[1] === "since entry" ? 2 : 1)}% <span class="ter">${chg[1]}</span></span>` : ""}
+          ${chg ? `<span class="cpill lg2 ${chg[0] >= 0 ? "up" : "down"}">${chg[0] >= 0 ? "▲" : "▼"} ${Math.abs(chg[0]).toFixed((chg[1] === "since entry" || chg[1] === "sold") ? 2 : 1)}% <span class="ter">${esc(chgLabel)}</span></span>` : ""}
+          ${closedPill}
           <span class="mctip">${mcOn ? "tap to show price" : "tap to show market cap"}</span></button>
       </div>
       <div class="chartcard glass" id="chartcard"><div class="chsrc">${chartSrc(mint, c)}</div>
@@ -1524,16 +1571,20 @@
       gtWanted(c);
       const tf = tfFor(mint, c.age_h), step = TFS[tf][2], g = OHLC[mint + "|" + tf], gt = g && g.cs && g.cs.length ? g.cs : null;
       const cv = document.getElementById("candles");
-      if (cv) {
+      S.chartSlotBy = S.chartSlotBy || {};
+      S.chartZoomUser = S.chartZoomUser || {};
+      const userZ = !!S.chartZoomUser[mint];
+      const saved = S.chartOff[mint] != null || S.chartSlotBy[mint] != null;
+      if (cv && saved) {
         cv._st = Object.assign(cv._st || {}, {
-          off: S.chartOff[mint] != null ? S.chartOff[mint] : (cv._st && cv._st.off) || 0,
-          slot: S.chartSlot || (cv._st && cv._st.slot) || (window.DeskChart && DeskChart.SLOT_DEF) || 9
+          off: S.chartOff[mint] || 0,
+          slot: S.chartSlotBy[mint] || (cv._st && cv._st.slot)
         });
       }
       const wrap = document.getElementById("chartcard");
       if (wrap) wrap.classList.toggle("loading", !!(g && g.loading && !gt));
       const desk = deskCandles(c.candles, step);
-      const base = mergeCandles(gt, desk), k = mcOn ? fac : 1;
+      const base = mergeCandles(gt, desk, step), k = mcOn ? fac : 1;
       const list = k == null ? [] : k === 1 ? base : base.map(q => ({ ...q, o: q.o * k, h: q.h * k, l: q.l * k, c: q.c * k }));
       const sc = v => v == null || k == null ? null : v * k;
       const rawList = k == null ? [] : list.map(q => {
@@ -1547,6 +1598,7 @@
       const lastC = DeskChart.candles(cv, rawList, null,
                         { loading: !!(c.pool || c.address) && (!g || g.loading) && !base.length, step, min: 1, fmt: mcOn ? kfmt : undefined,
                           lines, entryLine: null,
+                          fit: !userZ && !saved,
                           until: Date.now() / 1000,
                           live: livePx == null || k == null ? null : (k === 1 ? livePx : livePx * k),
                           livePx, liveMc: fac != null && livePx != null ? livePx * fac : null,
@@ -1583,23 +1635,32 @@
       const pg = document.getElementById("pricetog");
       if (pg) pg.onclick = flipMc;
       if (cv) {
-        cv.addEventListener("pointerup", () => { if (cv._st) { S.chartOff[mint] = cv._st.off; saveSlot(cv); } });
-        const doZoom = dir => { if (!window.DeskChart) return; DeskChart.zoom(cv, dir); if (cv._st) { S.chartOff[mint] = cv._st.off; saveSlot(cv); } };
+        const persistZoom = () => { if (cv._st) { S.chartOff[mint] = cv._st.off; S.chartSlotBy[mint] = cv._st.slot; saveSlot(cv); } };
+        cv.addEventListener("pointerup", () => { persistZoom(); });
+        const doZoom = (dir, fromUser) => {
+          if (!window.DeskChart) return;
+          DeskChart.zoom(cv, dir);
+          if (fromUser) S.chartZoomUser[mint] = dir !== "fit";
+          persistZoom();
+        };
         const zout = document.getElementById("zout"), zin = document.getElementById("zin"), zfit = document.getElementById("zfit");
-        if (zout) zout.onclick = e => { e.preventDefault(); doZoom("out"); };
-        if (zin) zin.onclick = e => { e.preventDefault(); doZoom("in"); };
-        if (zfit) zfit.onclick = e => { e.preventDefault(); doZoom("fit"); };
-        // If the default window is almost flat next to the full series (e.g. a rug then a long tail to now), auto-fit.
-        if (!cv._autoFit && S.chartOff[mint] == null && lastC && cv._info && !(g && g.loading && !(gt && gt.length))) {
-          const inf = cv._info;
-          if (inf.spanAll > 0 && inf.spanVis < 0.15 * inf.spanAll) doZoom("fit");
-          if (!(g && g.loading)) cv._autoFit = true;
-        }
+        if (zout) zout.onclick = e => { e.preventDefault(); doZoom("out", true); };
+        if (zin) zin.onclick = e => { e.preventDefault(); doZoom("in", true); };
+        if (zfit) zfit.onclick = e => { e.preventDefault(); doZoom("fit", false); };
+        const ensureFit = () => {
+          if (userZ || !cv._st || !cv._info) return;
+          const pw = Math.max(1, (cv.clientWidth || 0) - 64);
+          const used = (cv._info.slots || 0) * (cv._st.slot || 0);
+          if (cv._info.slots && (used < pw - 8 || used > pw + 0.5)) doZoom("fit");
+        };
+        ensureFit();
+        requestAnimationFrame(ensureFit);
       }
       breathe(lastC);
       view.querySelectorAll("[data-tf]").forEach(b => b.onclick = e => { e.preventDefault(); if (S.tf[mint] === b.dataset.tf) return;
-        S.tf[mint] = b.dataset.tf; S.chartOff[mint] = 0; const cvs = document.getElementById("candles");
-        if (cvs) { cvs._st = Object.assign(cvs._st || {}, { off: 0 }); cvs._lastC = null; }
+        S.tf[mint] = b.dataset.tf; S.chartOff[mint] = 0; S.chartSlotBy[mint] = null; S.chartZoomUser[mint] = false;
+        const cvs = document.getElementById("candles");
+        if (cvs) { cvs._st = Object.assign(cvs._st || {}, { off: 0, slot: undefined }); cvs._lastC = null; }
         render(); });
     } };
   }
@@ -2200,7 +2261,7 @@
         gtWanted(coint);
         const tf = tfFor(p.mint, coint.age_h), step = TFS[tf][2], g = OHLC[p.mint + "|" + tf], gt = g && g.cs && g.cs.length ? g.cs : null;
         const desk = deskCandles(coint.candles || p.candles || [], step);
-        const base = mergeCandles(gt, desk);
+        const base = mergeCandles(gt, desk, step);
         const list = base.map(q => ({ ...q, px: q.c, mc: (fac != null && q.c != null) ? q.c * fac : null }));
         const ath = athFrom(coint, base);
         const lines = posChartLines(p.entry_price, open ? snap : null, open ? draft : {}, ath, null, { exit: open ? null : p.exit_price });

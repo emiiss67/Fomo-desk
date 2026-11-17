@@ -6,6 +6,11 @@
                      card2: "#2c2c2e", text: "#ffffff", bg: "#000000" };
   const FONT = '-apple-system,"SF Pro Text",BlinkMacSystemFont,"Helvetica Neue",Arial,sans-serif';
   const SLOT_MIN = 3, SLOT_MAX = 24, SLOT_DEF = 9;
+  const SLOT_FIT_MIN = 1.25, SLOT_FIT_MAX = 72;
+  function fitSlot(plotW, n) {
+    if (!(n > 0) || !(plotW > 0)) return SLOT_DEF;
+    return Math.max(SLOT_FIT_MIN, Math.min(SLOT_FIT_MAX, plotW / n));
+  }
 
   function cssColor(name, fallback) {
     try { const v = getComputedStyle(document.documentElement).getPropertyValue(name).trim(); return v || fallback; }
@@ -197,23 +202,41 @@
      until (unix s) extends those dashes to "now" so the right edge is the current minute. */
   function fillGaps(cs, step, until) {
     if (!cs.length) return [];
-    const out = [];
-    if (!step || cs.length < 2) cs.forEach(c => out.push(Object.assign({}, c)));
-    else {
-      for (let i = 0; i < cs.length; i++) {
-        if (i) { let t = cs[i - 1].t + step, k = 0;
-          while (t < cs[i].t - step / 2 && k < 600) {
-            const p = cs[i - 1];
-            out.push({ t, o: p.c, h: p.c, l: p.c, c: p.c, vol: 0, gap: true, px: p.px, mc: p.mc });
-            t += step; k++;
-          } }
-        out.push(Object.assign({}, cs[i]));
+    if (!step) return cs.map(c => Object.assign({}, c));
+    const bucket = t => Math.floor(Number(t) / step) * step;
+    const map = new Map();
+    cs.forEach(c => {
+      if (!c || c.t == null || !isFinite(c.t)) return;
+      const t = bucket(c.t);
+      const prev = map.get(t);
+      if (!prev) map.set(t, Object.assign({}, c, { t }));
+      else {
+        prev.h = Math.max(prev.h, c.h);
+        prev.l = Math.min(prev.l, c.l);
+        prev.c = c.c;
+        if (c.vol > 0) prev.vol = (prev.vol || 0) + c.vol;
+        if (c.px != null) prev.px = c.px;
+        if (c.mc != null) prev.mc = c.mc;
       }
+    });
+    const times = [...map.keys()].sort((a, b) => a - b);
+    if (!times.length) return [];
+    const out = [];
+    for (let i = 0; i < times.length; i++) {
+      if (i) {
+        let t = times[i - 1] + step, k = 0;
+        while (t < times[i] && k < 600) {
+          const p = out[out.length - 1];
+          out.push({ t, o: p.c, h: p.c, l: p.c, c: p.c, vol: 0, gap: true, px: p.px, mc: p.mc });
+          t += step; k++;
+        }
+      }
+      out.push(map.get(times[i]));
     }
-    if (step && until && out.length) {
+    if (until && out.length) {
       let k = 0;
-      const end = Math.floor(until / step) * step;
-      while (out[out.length - 1].t < end - step / 2 && k < 600) {
+      const end = bucket(until);
+      while (out[out.length - 1].t < end && k < 600) {
         const p = out[out.length - 1], t = p.t + step;
         out.push({ t, o: p.c, h: p.c, l: p.c, c: p.c, vol: 0, gap: true, px: p.px, mc: p.mc });
         k++;
@@ -221,11 +244,10 @@
     }
     return out;
   }
-  function clampSlot(s) { return Math.max(SLOT_MIN, Math.min(SLOT_MAX, s)); }
+  function clampSlot(s) { return Math.max(SLOT_FIT_MIN, Math.min(SLOT_FIT_MAX, s)); }
   function stOf(canvas) {
     const st = canvas._st || (canvas._st = { off: 0, slot: SLOT_DEF });
-    if (!(st.slot > 0)) st.slot = SLOT_DEF;
-    st.slot = clampSlot(st.slot);
+    if (!(st.slot > 0) || !isFinite(st.slot)) st.slot = SLOT_DEF;
     return st;
   }
   function zoomAt(canvas, newSlot, midX) {
@@ -254,7 +276,7 @@
     if (dir === "reset") { st.slot = SLOT_DEF; st.off = 0; if (canvas._draw) canvas._draw(); return st; }
     if (dir === "fit") {
       // Allow slots tighter than SLOT_MIN so a long fill-to-now series still fits on one screen.
-      if (slots > 0) st.slot = Math.max(1.25, Math.min(SLOT_MAX, plotW / slots));
+      if (slots > 0) st.slot = fitSlot(plotW, slots);
       st.off = 0;
       if (canvas._draw) canvas._draw();
       return st;
@@ -299,7 +321,7 @@
     const showVol = opts.volume !== false;
     const AX = 64, plotW = Math.max(1, w - AX), top = 20, priceBot = Math.round(h * (showVol ? 0.70 : 0.86)), volTop = Math.round(h * 0.75), volBot = h - 22;
     if (opts.fit && all.length) {
-      st.slot = Math.max(1.25, Math.min(SLOT_MAX, plotW / all.length));
+      st.slot = fitSlot(plotW, all.length);
       st.off = 0;
     }
     const slot = st.slot;
@@ -321,11 +343,9 @@
       opts.lines ? [] : extraLines
     );
     lines.forEach(L => { lo = Math.min(lo, L.price); hi = Math.max(hi, L.price); });
-    if (exitLine != null && opts.lines) { /* included in opts.lines by the caller */ }
-    if (!opts.lines) {
-      if (exitLine != null && exitLine > lo * 0.5 && exitLine < hi * 1.5) { lo = Math.min(lo, exitLine); hi = Math.max(hi, exitLine); }
-      if (entryLine != null && entryLine > lo * 0.5 && entryLine < hi * 1.5) { lo = Math.min(lo, entryLine); hi = Math.max(hi, entryLine); }
-    }
+    if (exitLine != null && isFinite(exitLine)) { lo = Math.min(lo, exitLine); hi = Math.max(hi, exitLine); }
+    if (entryLine != null && isFinite(entryLine)) { lo = Math.min(lo, entryLine); hi = Math.max(hi, entryLine); }
+    if (opts.live != null && isFinite(opts.live)) { lo = Math.min(lo, opts.live); hi = Math.max(hi, opts.live); }
     if (hi - lo <= hi * 1e-6) { hi *= 1.02; lo *= 0.98; }
     const pad = (hi - lo) * 0.08; lo -= pad; hi += pad;
     const Y = v => priceBot - (v - lo) / (hi - lo) * (priceBot - top);
@@ -635,5 +655,5 @@
     ctx.fillText(score == null ? "–" : String(Math.round(score)), S / 2, S / 2 + 1); ctx.textAlign = "left";
   }
 
-  window.DeskChart = { line, candles, ring, fmtP, zoom, SLOT_DEF };
+  window.DeskChart = { line, candles, ring, fmtP, zoom, SLOT_DEF, fillGaps, fitSlot, SLOT_FIT_MIN, SLOT_FIT_MAX };
 })();
