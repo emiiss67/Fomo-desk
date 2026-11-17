@@ -7,7 +7,7 @@
   const QS = new URLSearchParams(location.search);
   const FIXTURE = LOCAL ? QS.get("fixture") : null;          // local screenshots only
   const POLL_VISIBLE_S = 2, POLL_HIDDEN_S = 15, POLL_S = POLL_VISIBLE_S, MAX_BACKOFF = 60;
-  const APP_VERSION = "v40";   // bump with every app release (also index.html ?v= and sw.js CACHE)
+  const APP_VERSION = "v41";   // bump with every app release (also index.html ?v= and sw.js CACHE)
   const AGENTS = ["scanner", "auditor", "analyst", "executor", "risk"];
   const TITLE = { scanner: "Scanner", auditor: "Auditor", analyst: "Analyst", executor: "Executor", risk: "Risk" };
   const COLOR = { scanner: "cyan", auditor: "", analyst: "yellow", executor: "green", risk: "pink" };
@@ -398,11 +398,13 @@
     if (c && c.ath != null && isFinite(+c.ath)) hi = hi == null ? +c.ath : Math.max(hi, +c.ath);
     return hi;
   }
-  function posChartLines(entry, snap, draft, ath, sc) {
+  function posChartLines(entry, snap, draft, ath, sc, extra) {
     const sx = v => (v == null || !isFinite(v)) ? null : (sc ? sc(v) : v);
     const out = [];
+    extra = extra || {};
     if (entry != null && isFinite(entry)) out.push({ id: "entry", kind: "entry", price: sx(entry), label: "Entry", color: cssVar("--cyan", "#64d2ff"), drag: false });
     if (ath != null && isFinite(ath)) out.push({ id: "ath", kind: "ath", price: sx(ath), label: "ATH", color: cssVar("--yellow", "#ffd60a"), drag: false, dash: true });
+    if (extra.exit != null && isFinite(extra.exit)) out.push({ id: "exit", kind: "exit", price: sx(extra.exit), label: "Exit", color: cssVar("--orange", "#ffb340"), drag: false, dash: true });
     const riskSl = snap && snap.sl_risk_price;
     const userSl = draft && draft.slPrice != null ? draft.slPrice : (snap && snap.sl_price);
     const userSlPct = draft && draft.slPct != null ? draft.slPct : (snap && snap.sl_pct);
@@ -626,6 +628,10 @@
     if (r.name === "coin" && r.arg && (ch(`coin/${r.arg}.json`) || !S.coin[r.arg])) await getOpt(`coin/${r.arg}.json`, S.coin, r.arg);
     if (r.name === "coin" && r.arg && S.coin[r.arg] && S.coin[r.arg].audit_chip && (ch(`audit/${r.arg}.json`) || !S.audit[r.arg])) await getOpt(`audit/${r.arg}.json`, S.audit, r.arg);
     if (r.name === "home") for (const o of openPositions()) if (ch(`coin/${o.row.mint}.json`) || !S.coin[o.row.mint]) await getOpt(`coin/${o.row.mint}.json`, S.coin, o.row.mint);
+    if (r.name === "bot" && r.arg && S.bot) {
+      const bp = (S.bot.book || S.bot.positions || []).find(x => String(x.id) === String(decodeURIComponent(r.arg)));
+      if (bp && bp.mint && (ch(`coin/${bp.mint}.json`) || !S.coin[bp.mint])) await getOpt(`coin/${bp.mint}.json`, S.coin, bp.mint);
+    }
     const am = r.name === "audit" ? (r.arg || auditMint()) : null;
     if (am && (ch(`audit/${am}.json`) || !S.audit[am])) await getOpt(`audit/${am}.json`, S.audit, am);
     if (r.name === "agents") for (const a of AGENTS) if (ch(`decisions/${a}.json`) || !S.decisions[a]) await getOpt(`decisions/${a}.json`, S.decisions, a);
@@ -874,11 +880,15 @@
     const up = vs[vs.length - 1] >= vs[0];
     return `<svg class="mixspark" viewBox="0 0 ${w} ${h}" preserveAspectRatio="none"><path d="${d}" fill="none" stroke="${up ? "var(--green)" : "var(--red)"}" stroke-width="1.5"/></svg>`;
   }
-  function mixCard(c) {
-    const href = c.coin && c.coin.mint ? coinHref(c.coin.mint) : null;
-    const pill = c.pnl_pct == null ? "" : `<span class="cpill ${c.pnl_pct >= 0 ? "up" : "down"}">${sgn(c.pnl_pct, 1)}</span>`;
+  function mixCard(c, opts) {
+    opts = opts || {};
+    const href = c.coin && opts.bot && c.coin.id ? ("#/bot/" + encodeURIComponent(c.coin.id))
+      : (c.coin && c.coin.mint ? coinHref(c.coin.mint) : null);
+    const open = !!(c.coin && c.coin.open);
+    const pill = (open && c.pnl_pct != null) ? `<span class="cpill ${c.pnl_pct >= 0 ? "up" : "down"}">${sgn(c.pnl_pct, 1)}</span>` : "";
+    const sold = (!open && c.coin) ? `<span class="mixsold ${(c.pnl_usd || 0) >= 0 ? "green" : "red"}">sold${c.pnl_pct != null ? " · " + sgn(c.pnl_pct, 1) : ""}${c.pnl_usd != null ? " · " + moneyS(c.pnl_usd) : ""}</span>` : "";
     const coin = c.coin
-      ? `${logo(c.coin.name || c.coin.mint, c.coin.logo, 22)}<span class="mixticker">${esc(c.coin.name)}</span>${pill}`
+      ? `${logo(c.coin.name || c.coin.mint, c.coin.logo, 22)}<span class="mixticker">${esc(c.coin.name)}</span>${pill}${sold}`
       : `<span class="ter">no fill yet</span>`;
     const st = c.status === "feed_down" ? "feed_down" : c.status === "unavailable" ? "unavailable" : c.status === "active" ? "active" : "idle";
     const scan = st === "feed_down" ? (c.note || "Feed down")
@@ -917,7 +927,7 @@
       : `<div class="bigrow"><span class="big odo glow" aria-label="${esc(money(bal))}">${odo.html}</span></div>
          <div class="today"><span class="${today == null ? "sec" : today >= 0 ? "green" : "red"}">${today == null ? "—" : sgn(today)}</span><span class="sec">today</span>
          ${mult != null ? `<span class="pill mult">${Number(mult).toFixed(2)}×</span>` : ""}${unpriced ? `<span class="ter">${unpriced} position${unpriced > 1 ? "s" : ""} not priced yet</span>` : ""}</div>
-        <div class="chartwrap"><canvas id="line"></canvas>${rng.points.length ? "" : `<div class="chartempty">${book === "LIVE" && st.paper ? "no LIVE data yet" : "Waiting for the first trade"}</div>`}</div>
+        <div class="chartwrap">${(book === "LIVE" && (rng.empty || !(rng.points || []).some(p => p[1]))) ? `<div class="chartempty">No LIVE FOMO fills</div>` : `<canvas id="line"></canvas>${rng.points.length ? "" : `<div class="chartempty">${book === "LIVE" && st.paper ? "no LIVE data yet" : "Waiting for the first trade"}</div>`}`}</div>
         <div class="ranges">${["LIVE", "1H", "4H", "1D", "1W", "ALL"].map(r => `<button data-range="${r}" class="${r === S.range ? "on" : ""}">${r}</button>`).join("")}</div>`;
     const mixOn = !!(S.state && S.state.mix && S.state.mix.active) && !missesOn;
     const mixBoard = mixOn ? `<div class="mixgrid">${(mixCards() || []).map(mixCard).join("")}</div>` : "";
@@ -1523,7 +1533,7 @@
       });
       const ath = athFrom(c, base);
       const draft = S.lineDraft[mint] || {};
-      const lines = (p && p.open) ? posChartLines(p.entryPrice, p.lines, draft, ath, sc) : (ath != null && k != null ? posChartLines(null, null, {}, ath, sc) : []);
+      const lines = (k == null) ? [] : posChartLines(p && p.entryPrice, p && p.open ? p.lines : null, p && p.open ? draft : {}, ath, sc, { exit: p && !p.open ? p.exitPrice : null });
       const livePx = livePrice(mint, c);
       const lastC = DeskChart.candles(cv, rawList, null,
                         { loading: !!(c.pool || c.address) && (!g || g.loading) && !base.length, step, min: 1, fmt: mcOn ? kfmt : undefined,
@@ -2054,6 +2064,7 @@
       <div class="chartwrap"><canvas id="botline"></canvas>${viewed.fallback ? "" : (points.length ? "" : '<div class="chartempty">no data yet</div>')}</div>
       <div class="ranges">${RANGE_ORDER.map(r => `<button type="button" data-botrange="${r}" class="${r === botRange ? "on" : ""}">${r}</button>`).join("")}</div>
       ${chartHint}${unitBtns}</section>
+      ${(b.mix && b.mix.cards && b.mix.cards.length) ? `<div class="mixgrid botmix">${b.mix.cards.map(c => mixCard(c, { bot: true })).join("")}</div>` : ""}
       <div class="card"><h3>Auto-trading bot</h3>
         <div class="kv"><span>${onp} ${mode}</span><span class="ter">${b.killing ? "killing…" : ""}</span></div>
         ${kv("Wallet SOL", esc(sol(b.sol_balance)))}
@@ -2118,9 +2129,9 @@
           ${p.pnl_pct != null ? `<span class="cpill lg2 ${p.pnl_pct >= 0 ? "up" : "down"}">${esc(sgn(p.pnl_pct, 2))}</span>` : ""}
           ${p.mode === "LIVE" ? '<span class="pill redp">LIVE</span>' : '<span class="pill paper">DRY</span>'}</div>
       </div>
-      <div class="chartcard glass" id="botposchart"><div class="chsrc"><span class="srcl">desk prices · press and hold a candle</span></div>
+      <div class="chartcard glass" id="botposchart"><div class="chsrc">${chartSrc(p.mint, coin)}</div>
         <div class="zoomrow"><span class="zoomctl" role="group" aria-label="Chart zoom"><button type="button" id="zout" aria-label="Zoom out">−</button><button type="button" id="zfit" aria-label="Show all candles">All</button><button type="button" id="zin" aria-label="Zoom in">+</button></span><span class="zoomhint">pinch or drag · drag SL/TP handles</span></div>
-        <div class="chartwrap" style="position:relative"><canvas id="botcandles"></canvas>${(p.candles || []).length ? "" : '<div class="chartempty">no price data yet</div>'}</div></div>
+        <div class="chartwrap" style="position:relative"><canvas id="botcandles"></canvas></div></div>
       <div class="statgrid">
         <div class="cell"><div class="k">Invested</div><div class="v">${p.cost_usd != null ? esc(money(p.cost_usd)) : "—"}<span class="ter"> · ${esc(sol(p.cost_sol))}</span></div></div>
         <div class="cell"><div class="k">Value</div><div class="v">${p.value_usd != null ? esc(money(p.value_usd)) : "—"}<span class="ter"> · ${esc(sol(p.value_sol))}</span></div></div>
@@ -2164,12 +2175,23 @@
       bindLine("botslin", "botslgo", "botslseg", "slDraft", "slPart", "sl");
       const cv = document.getElementById("botcandles");
       if (cv && window.DeskChart) {
-        const list = deskCandles(p.candles || [], 60).map(q => ({ ...q, px: q.c, mc: (fac != null && q.c != null) ? q.c * fac : null }));
-        const ath = athFrom(coin, list);
-        const lines = open ? posChartLines(p.entry_price, snap, draft, ath) : (ath != null ? posChartLines(p.entry_price, null, {}, ath) : posChartLines(p.entry_price, null, {}, ath));
-        DeskChart.candles(cv, list, null, { entryLine: null, lines, min: 1,
-          emptyText: (p.candles || []).length ? undefined : "no price data yet",
-          mcFmt: kfmt,
+        const coint = Object.assign({ mint: p.mint }, coin);
+        if (!(coint.candles && coint.candles.length) && p.candles) coint.candles = p.candles;
+        gtWanted(coint);
+        const tf = tfFor(p.mint, coint.age_h), step = TFS[tf][2], g = OHLC[p.mint + "|" + tf], gt = g && g.cs && g.cs.length ? g.cs : null;
+        const desk = deskCandles(coint.candles || p.candles || [], step);
+        const base = mergeCandles(gt, desk);
+        const list = base.map(q => ({ ...q, px: q.c, mc: (fac != null && q.c != null) ? q.c * fac : null }));
+        const ath = athFrom(coint, base);
+        const lines = posChartLines(p.entry_price, open ? snap : null, open ? draft : {}, ath, null, { exit: open ? null : p.exit_price });
+        const livePx = livePrice(p.mint, coint) || p.price;
+        const lastC = DeskChart.candles(cv, list, null, {
+          loading: !!(coint.pool || coint.address) && (!g || g.loading) && !base.length,
+          step, min: 1, lines, entryLine: null,
+          until: Date.now() / 1000,
+          live: livePx, livePx, liveMc: fac != null && livePx != null ? livePx * fac : null,
+          emptyText: base.length ? undefined : "no price data yet",
+          volume: volOn(), mcFmt: kfmt,
           tip: (candle, info) => {
             const when = info && info.time ? info.time : "";
             const pr = candle.px != null ? candle.px : candle.c;
@@ -2197,6 +2219,11 @@
         if (zout) zout.onclick = e => { e.preventDefault(); doZoom("out"); };
         if (zin) zin.onclick = e => { e.preventDefault(); doZoom("in"); };
         if (zfit) zfit.onclick = e => { e.preventDefault(); doZoom("fit"); };
+        if (!cv._autoFit && lastC && cv._info && !(g && g.loading && !(gt && gt.length))) {
+          const inf = cv._info;
+          if (inf.spanAll > 0 && inf.spanVis < 0.15 * inf.spanAll) doZoom("fit");
+          if (!(g && g.loading)) cv._autoFit = true;
+        }
       }
     } };
   }
