@@ -7,7 +7,7 @@
   const QS = new URLSearchParams(location.search);
   const FIXTURE = LOCAL ? QS.get("fixture") : null;          // local screenshots only
   const POLL_VISIBLE_S = 2, POLL_HIDDEN_S = 15, POLL_S = POLL_VISIBLE_S, MAX_BACKOFF = 60;
-  const APP_VERSION = "v41";   // bump with every app release (also index.html ?v= and sw.js CACHE)
+  const APP_VERSION = "v42";   // bump with every app release (also index.html ?v= and sw.js CACHE)
   const AGENTS = ["scanner", "auditor", "analyst", "executor", "risk"];
   const TITLE = { scanner: "Scanner", auditor: "Auditor", analyst: "Analyst", executor: "Executor", risk: "Risk" };
   const COLOR = { scanner: "cyan", auditor: "", analyst: "yellow", executor: "green", risk: "pink" };
@@ -424,13 +424,20 @@
     }
     return out.filter(L => L.price != null && isFinite(L.price));
   }
-  function heldFor(iso) {
+  function heldFor(iso, endIso) {
     if (!iso) return "—";
-    const s = Math.max(0, (Date.now() - new Date(iso)) / 1000);
+    const end = endIso ? new Date(endIso) : new Date();
+    const s = Math.max(0, (end - new Date(iso)) / 1000);
     if (s < 60) return "<1m";
     if (s < 3600) return Math.round(s / 60) + "m";
     if (s < 86400) return Math.floor(s / 3600) + "h " + Math.round((s % 3600) / 60) + "m";
     return Math.floor(s / 86400) + "d " + Math.floor((s % 86400) / 3600) + "h";
+  }
+  function soldAt(iso) {
+    if (!iso) return "";
+    try {
+      return new Date(iso).toLocaleTimeString("en-GB", { timeZone: "Europe/Vilnius", hour: "2-digit", minute: "2-digit", hour12: false });
+    } catch (e) { return ""; }
   }
   const moneyS = v => v == null ? "—" : (v >= 0 ? "+" : "-") + "$" + Math.abs(v).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
   const kfmt = v => v == null ? "—" : v >= 1e6 ? "$" + (v / 1e6).toFixed(2) + "M" : v >= 1e3 ? "$" + (v / 1e3).toFixed(1) + "K" : "$" + v.toFixed(0);
@@ -884,9 +891,9 @@
     opts = opts || {};
     const href = c.coin && opts.bot && c.coin.id ? ("#/bot/" + encodeURIComponent(c.coin.id))
       : (c.coin && c.coin.mint ? coinHref(c.coin.mint) : null);
-    const open = !!(c.coin && c.coin.open);
+    const open = !!(c.coin && c.coin.open && c.coin.status !== "closed");
     const pill = (open && c.pnl_pct != null) ? `<span class="cpill ${c.pnl_pct >= 0 ? "up" : "down"}">${sgn(c.pnl_pct, 1)}</span>` : "";
-    const sold = (!open && c.coin) ? `<span class="mixsold ${(c.pnl_usd || 0) >= 0 ? "green" : "red"}">sold${c.pnl_pct != null ? " · " + sgn(c.pnl_pct, 1) : ""}${c.pnl_usd != null ? " · " + moneyS(c.pnl_usd) : ""}</span>` : "";
+    const sold = (!open && c.coin) ? `<span class="mixsold ${(c.pnl_usd || 0) >= 0 ? "green" : "red"}">sold${c.pnl_pct != null ? " · " + sgn(c.pnl_pct, 2) : ""}${c.pnl_usd != null ? " · " + moneyS(c.pnl_usd) : ""}</span>` : "";
     const coin = c.coin
       ? `${logo(c.coin.name || c.coin.mint, c.coin.logo, 22)}<span class="mixticker">${esc(c.coin.name)}</span>${pill}${sold}`
       : `<span class="ter">no fill yet</span>`;
@@ -1433,17 +1440,19 @@
   }
 
   // header price: the newest real price we have (GeckoTerminal's last candle close if it is newer than the desk sample)
-  function livePrice(mint, c) {
+  function livePrice(mint, c, fallbackT) {
     const g = OHLC[ohlcKey(mint, c.age_h)], last = g && g.cs && g.cs.length ? g.cs[g.cs.length - 1] : null;
-    const deskT = c.price_ts ? Date.parse(c.price_ts) / 1000 : 0;
-    const gtT = last ? last.t + ((g && g.step) || 60) : 0;
+    const deskT = c.price_ts ? Date.parse(c.price_ts) / 1000 : (fallbackT || 0);
+    const gtT = last ? last.t : 0;
     return last && (c.price == null || gtT >= deskT) ? last.c : c.price;
   }
   function chartSrc(mint, c) {
     const cur = tfFor(mint, c.age_h), g = OHLC[mint + "|" + cur];
     const wait = g && g.waitUntil && g.waitUntil > Date.now() ? Math.ceil((g.waitUntil - Date.now()) / 1000) : 0;
-    const src = g && g.cs && g.cs.length ? `${cur} · GeckoTerminal` : (g ? g.loading : !!(c.pool || c.address)) ? (wait ? `GeckoTerminal busy · retry in ${wait}s` : `Loading ${cur}…`)
-      : (c.candles || []).length ? `${cur} · desk prices` : "";
+    const src = g && g.cs && g.cs.length ? `${cur} · GeckoTerminal`
+      : (c.candles || []).length ? `${cur} · desk prices`
+      : (g ? g.loading : !!(c.pool || c.address)) ? (wait ? `GeckoTerminal busy · retry in ${wait}s` : `Loading ${cur}…`)
+      : "";
     return `<span class="tfs">${Object.keys(TFS).map(k => `<button type="button" data-tf="${k}" class="${k === cur ? "on" : ""}" aria-pressed="${k === cur}">${k}</button>`).join("")}</span><span class="srcl">${esc(src)}</span>`;
   }
   function coinScreen(mint) {
@@ -2041,7 +2050,7 @@
       const s = p.cost_sol != null ? sol(p.cost_sol) : (p.size_sol != null ? sol(p.size_sol) : "—");
       return usd + " · " + s;
     };
-    const pos = (b.positions || []).map(p => `<a class="row" href="#/bot/${esc(p.id)}"><span class="main"><div class="t">${esc(p.name || (p.mint || "").slice(0, 6))} <span class="ter">#${esc(p.id)}</span></div>
+    const pos = (b.positions || []).filter(p => p && p.status !== "closed" && !p.closed_at).map(p => `<a class="row" href="#/bot/${esc(p.id)}"><span class="main"><div class="t">${esc(p.name || (p.mint || "").slice(0, 6))} <span class="ter">#${esc(p.id)}</span></div>
         <div class="s">${esc(putIn(p))} in · now ${esc(sol(p.value_sol))}${p.status !== "open" ? " · " + esc(p.status) : ""}${p.tp_pct != null ? " · TP +" + esc(p.tp_pct) + "%" : ""}</div></span>
         <span class="v"><div class="${cls(p.pnl_pct)}">${esc(pctS(p.pnl_pct))}</div><div class="s ${cls(p.pnl_usd != null ? p.pnl_usd : p.pnl_sol)}">${p.pnl_usd != null ? esc(moneyS(p.pnl_usd)) : esc(solS(p.pnl_sol))}</div></span></a>`).join("");
     const trades = (b.trades || []).map(t => {
@@ -2123,22 +2132,33 @@
     const tpGo = tgLink(tpPayload(p.id, tpDraft, tpPart, "bottp_") || "");
     const slGo = tgLink(slPayload(p.id, slDraft, slPart, "botsl_") || "");
     const solscan = p.mint ? "https://solscan.io/token/" + encodeURIComponent(p.mint) : (p.buy_link && safeUrl(p.buy_link) ? p.buy_link : "");
+    const sold = soldAt(p.closed_at);
+    const reason = (p.exit_reason || "").trim();
+    const closedPill = !open
+      ? `<span class="pill closedp">Closed${sold ? " · sold " + esc(sold) : ""}${reason ? " · " + esc(reason) : ""}</span>`
+      : (p.mode === "LIVE" ? '<span class="pill redp">LIVE</span>' : '<span class="pill paper">DRY</span>');
+    const sub = !open
+      ? `${esc(p.mode || "")}${p.strategy ? " · " + esc(p.strategy) : ""}`
+      : `${esc(p.mode || "")} · ${esc(p.status || "")}${reason ? " · " + esc(reason) : ""}`;
+    const holdH = (!open && p.opened_at && p.closed_at)
+      ? Math.max(0, (new Date(p.closed_at) - new Date(p.opened_at)) / 3600000) : coin.age_h;
     const html = backbar("Bot", "#/bot") + `<div class="coinhead">
         <div class="cname">${logo(p.name || p.mint, coin.logo, 48)}<span class="cnm"><span>${esc(p.name || (p.mint || "").slice(0, 4) + "…" + (p.mint || "").slice(-3))}</span>
-          <span class="sec sm">${esc(p.mode || "")} · ${esc(p.status || "")}${p.exit_reason ? " · " + esc(p.exit_reason) : ""}</span></span>
+          <span class="sec sm">${sub}</span></span>
           ${p.pnl_pct != null ? `<span class="cpill lg2 ${p.pnl_pct >= 0 ? "up" : "down"}">${esc(sgn(p.pnl_pct, 2))}</span>` : ""}
-          ${p.mode === "LIVE" ? '<span class="pill redp">LIVE</span>' : '<span class="pill paper">DRY</span>'}</div>
+          ${open ? closedPill : ""}</div>
+          ${!open ? `<div class="closedrow">${closedPill}</div>` : ""}
       </div>
-      <div class="chartcard glass" id="botposchart"><div class="chsrc">${chartSrc(p.mint, coin)}</div>
-        <div class="zoomrow"><span class="zoomctl" role="group" aria-label="Chart zoom"><button type="button" id="zout" aria-label="Zoom out">−</button><button type="button" id="zfit" aria-label="Show all candles">All</button><button type="button" id="zin" aria-label="Zoom in">+</button></span><span class="zoomhint">pinch or drag · drag SL/TP handles</span></div>
+      <div class="chartcard glass" id="botposchart"><div class="chsrc">${chartSrc(p.mint, Object.assign({}, coin, { age_h: holdH }))}</div>
+        <div class="zoomrow"><span class="zoomctl" role="group" aria-label="Chart zoom"><button type="button" id="zout" aria-label="Zoom out">−</button><button type="button" id="zfit" aria-label="Show all candles">All</button><button type="button" id="zin" aria-label="Zoom in">+</button></span><span class="zoomhint">${open ? "pinch or drag · drag SL/TP handles" : "pinch or drag"}</span></div>
         <div class="chartwrap" style="position:relative"><canvas id="botcandles"></canvas></div></div>
       <div class="statgrid">
         <div class="cell"><div class="k">Invested</div><div class="v">${p.cost_usd != null ? esc(money(p.cost_usd)) : "—"}<span class="ter"> · ${esc(sol(p.cost_sol))}</span></div></div>
-        <div class="cell"><div class="k">Value</div><div class="v">${p.value_usd != null ? esc(money(p.value_usd)) : "—"}<span class="ter"> · ${esc(sol(p.value_sol))}</span></div></div>
-        <div class="cell"><div class="k">PnL</div><div class="v ${pnlCls}">${p.pnl_usd != null ? esc(moneyS(p.pnl_usd)) : "—"}<span class="ter"> · ${esc(solS(p.pnl_sol))}</span></div></div>
+        <div class="cell"><div class="k">${open ? "Value" : "Got back"}</div><div class="v">${p.value_usd != null ? esc(money(p.value_usd)) : "—"}<span class="ter"> · ${esc(sol(p.value_sol))}</span></div></div>
+        <div class="cell"><div class="k">${open ? "PnL" : "Realized PnL"}</div><div class="v ${pnlCls}">${p.pnl_usd != null ? esc(moneyS(p.pnl_usd)) : "—"}<span class="ter"> · ${esc(solS(p.pnl_sol))}</span></div></div>
         <div class="cell"><div class="k">Entry</div><div class="v">${esc(px(p.entry_price))}</div></div>
-        <div class="cell"><div class="k">Now</div><div class="v">${esc(px(p.price))}</div></div>
-        <div class="cell"><div class="k">Held for</div><div class="v">${esc(heldFor(p.opened_at))}</div></div>
+        <div class="cell"><div class="k">${open ? "Now" : "Exit"}</div><div class="v">${esc(px(open ? p.price : p.exit_price))}</div></div>
+        <div class="cell"><div class="k">${open ? "Held for" : "Held"}</div><div class="v">${esc(heldFor(p.opened_at, open ? null : p.closed_at))}</div></div>
       </div>
       ${open ? `<div class="manual gutbot">
         <div class="tprow"><label class="tpin"><span>+</span><input id="bottpin" type="number" inputmode="decimal" min="0.1" max="100000" step="any" placeholder="50" value="${esc(tpDraft)}" aria-label="Take profit percent"><span>%</span></label>
@@ -2175,7 +2195,7 @@
       bindLine("botslin", "botslgo", "botslseg", "slDraft", "slPart", "sl");
       const cv = document.getElementById("botcandles");
       if (cv && window.DeskChart) {
-        const coint = Object.assign({ mint: p.mint }, coin);
+        const coint = Object.assign({ mint: p.mint }, coin, { age_h: holdH != null ? holdH : coin.age_h });
         if (!(coint.candles && coint.candles.length) && p.candles) coint.candles = p.candles;
         gtWanted(coint);
         const tf = tfFor(p.mint, coint.age_h), step = TFS[tf][2], g = OHLC[p.mint + "|" + tf], gt = g && g.cs && g.cs.length ? g.cs : null;
@@ -2184,7 +2204,13 @@
         const list = base.map(q => ({ ...q, px: q.c, mc: (fac != null && q.c != null) ? q.c * fac : null }));
         const ath = athFrom(coint, base);
         const lines = posChartLines(p.entry_price, open ? snap : null, open ? draft : {}, ath, null, { exit: open ? null : p.exit_price });
-        const livePx = livePrice(p.mint, coint) || p.price;
+        const livePx = livePrice(p.mint, coint, desk.length ? desk[desk.length - 1].t : 0) || p.price;
+        const zkey = "bot:" + p.id;
+        S.chartSlotBot = S.chartSlotBot || {};
+        S.chartZoomUser = S.chartZoomUser || {};
+        const userZ = !!S.chartZoomUser[zkey];
+        const saved = S.chartOff[zkey] != null || S.chartSlotBot[zkey] != null;
+        if (saved) cv._st = Object.assign(cv._st || {}, { off: S.chartOff[zkey] || 0, slot: S.chartSlotBot[zkey] || cv._st && cv._st.slot });
         const lastC = DeskChart.candles(cv, list, null, {
           loading: !!(coint.pool || coint.address) && (!g || g.loading) && !base.length,
           step, min: 1, lines, entryLine: null,
@@ -2192,6 +2218,7 @@
           live: livePx, livePx, liveMc: fac != null && livePx != null ? livePx * fac : null,
           emptyText: base.length ? undefined : "no price data yet",
           volume: volOn(), mcFmt: kfmt,
+          fit: !open && !userZ,
           tip: (candle, info) => {
             const when = info && info.time ? info.time : "";
             const pr = candle.px != null ? candle.px : candle.c;
@@ -2214,16 +2241,27 @@
             render();
           }
         });
-        const doZoom = dir => { DeskChart.zoom(cv, dir); };
+        const persistZoom = () => { if (cv._st) { S.chartOff[zkey] = cv._st.off; S.chartSlotBot[zkey] = cv._st.slot; } };
+        const doZoom = (dir, fromUser) => {
+          DeskChart.zoom(cv, dir);
+          if (fromUser) S.chartZoomUser[zkey] = dir !== "fit";
+          persistZoom();
+        };
         const zout = document.getElementById("zout"), zin = document.getElementById("zin"), zfit = document.getElementById("zfit");
-        if (zout) zout.onclick = e => { e.preventDefault(); doZoom("out"); };
-        if (zin) zin.onclick = e => { e.preventDefault(); doZoom("in"); };
-        if (zfit) zfit.onclick = e => { e.preventDefault(); doZoom("fit"); };
-        if (!cv._autoFit && lastC && cv._info && !(g && g.loading && !(gt && gt.length))) {
+        if (zout) zout.onclick = e => { e.preventDefault(); doZoom("out", true); };
+        if (zin) zin.onclick = e => { e.preventDefault(); doZoom("in", true); };
+        if (zfit) zfit.onclick = e => { e.preventDefault(); doZoom("fit", false); };
+        const ensureClosedFit = () => {
+          if (open || S.chartZoomUser[zkey] || !cv._st || !cv._info) return;
+          const pw = Math.max(1, (cv.clientWidth || 0) - 64);
+          if (cv._info.slots && cv._st.slot * cv._info.slots > pw + 0.5) doZoom("fit");
+        };
+        if (!open) { ensureClosedFit(); requestAnimationFrame(ensureClosedFit); }
+        else if (!saved && lastC && cv._info && !(g && g.loading && !(gt && gt.length))) {
           const inf = cv._info;
           if (inf.spanAll > 0 && inf.spanVis < 0.15 * inf.spanAll) doZoom("fit");
-          if (!(g && g.loading)) cv._autoFit = true;
         }
+        persistZoom();
       }
     } };
   }

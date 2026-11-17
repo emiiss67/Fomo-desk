@@ -253,7 +253,8 @@
     const slots = (canvas._info && canvas._info.slots) || 0;
     if (dir === "reset") { st.slot = SLOT_DEF; st.off = 0; if (canvas._draw) canvas._draw(); return st; }
     if (dir === "fit") {
-      if (slots > 0) st.slot = clampSlot(plotW / slots);
+      // Allow slots tighter than SLOT_MIN so a long fill-to-now series still fits on one screen.
+      if (slots > 0) st.slot = Math.max(1.25, Math.min(SLOT_MAX, plotW / slots));
       st.off = 0;
       if (canvas._draw) canvas._draw();
       return st;
@@ -295,9 +296,13 @@
         last.live = true;
       }
     }
-    const slot = st.slot;
     const showVol = opts.volume !== false;
-    const AX = 64, plotW = w - AX, top = 10, priceBot = Math.round(h * (showVol ? 0.70 : 0.86)), volTop = Math.round(h * 0.75), volBot = h - 22;
+    const AX = 64, plotW = Math.max(1, w - AX), top = 20, priceBot = Math.round(h * (showVol ? 0.70 : 0.86)), volTop = Math.round(h * 0.75), volBot = h - 22;
+    if (opts.fit && all.length) {
+      st.slot = Math.max(1.25, Math.min(SLOT_MAX, plotW / all.length));
+      st.off = 0;
+    }
+    const slot = st.slot;
     const fit = Math.max(1, Math.floor(plotW / slot));
     st.off = Math.max(0, Math.min(st.off, Math.max(0, all.length - fit)));
     const end = all.length - Math.round(st.off), cs = all.slice(Math.max(0, end - fit), end);
@@ -339,13 +344,30 @@
     });
     cs.forEach((c, i) => {
       const x = X(i);
-      if (c.gap) { ctx.fillStyle = C.ter; ctx.fillRect(Math.round(x - bw / 2), Math.round(Y(c.c)), bw, 1); return; }
+      if (c.gap) { ctx.fillStyle = C.ter; ctx.fillRect(Math.round(x - Math.max(1, bw / 2)), Math.round(Y(c.c)) - 0.5, Math.max(2, bw), 2); return; }
       const up = c.c >= c.o, col = up ? C.up : C.down, xs = Math.round(x) + 0.5;
       ctx.strokeStyle = col; ctx.lineWidth = 1;
       ctx.beginPath(); ctx.moveTo(xs, Y(c.h)); ctx.lineTo(xs, Y(c.l)); ctx.stroke();
       const y1 = Y(Math.max(c.o, c.c)), y2 = Y(Math.min(c.o, c.c));
       ctx.fillStyle = col; ctx.fillRect(Math.round(x - bw / 2), y1, bw, Math.max(1, y2 - y1));
     });
+    // A thin thread through consecutive gap slots so a long forward-fill stays visible at All zoom.
+    ctx.save();
+    ctx.strokeStyle = C.ter; ctx.globalAlpha = 0.9; ctx.lineWidth = 1.25; ctx.setLineDash([3, 3]);
+    let run = [];
+    const flushGap = () => {
+      if (!run.length) return;
+      ctx.beginPath();
+      run.forEach((pt, i) => i ? ctx.lineTo(pt.x, pt.y) : ctx.moveTo(pt.x, pt.y));
+      ctx.stroke();
+      run = [];
+    };
+    cs.forEach((c, i) => {
+      if (!c.gap) { flushGap(); return; }
+      run.push({ x: X(i), y: Y(c.c) });
+    });
+    flushGap();
+    ctx.restore();
     const step = opts.step || 60, every = Math.max(1, Math.ceil(64 / slot)), lblStep = step * every;
     const nice = [60, 120, 300, 600, 900, 1800, 3600, 7200, 14400].find(x => x >= lblStep) || lblStep;
     ctx.fillStyle = C.ter; ctx.textBaseline = "alphabetic"; ctx.textAlign = "center";
@@ -355,9 +377,11 @@
     if (lastX < 0 && n) ctx.fillText(hm(cs[0].t), Math.max(18, X(0)), h - 6);
     ctx.textAlign = "left";
     if (st.off > 0) {
+      // Sit in the volume pane (or just under the price plot) so the label never covers the ATH line.
       ctx.fillStyle = C.ter; ctx.font = "11px " + FONT;
       ctx.textAlign = "right"; ctx.textBaseline = "top";
-      ctx.fillText("‹ history", plotW - 6, top + 2);
+      const hy = showVol ? volTop + 2 : priceBot + 2;
+      ctx.fillText("‹ history", plotW - 6, hy);
       ctx.textAlign = "left"; ctx.textBaseline = "alphabetic";
     }
     const last = cs[n - 1], lc = last.c >= last.o ? C.up : C.down;
