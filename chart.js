@@ -193,14 +193,31 @@
 
   /* Coin candles. list = [{t (unix s), o, h, l, c, vol}] oldest first, real OHLCV only.
      Slot width is zoomable (pinch, wheel, or − / + / All). Right-aligned. Minutes with no trade
-     are a thin grey dash at the previous close (no invented price). Drag sideways to scroll back. */
-  function fillGaps(cs, step) {
-    if (!step || cs.length < 2) return cs.map(c => Object.assign({}, c));
+     are a thin grey dash at the previous close (no invented price). Drag sideways to scroll back.
+     until (unix s) extends those dashes to "now" so the right edge is the current minute. */
+  function fillGaps(cs, step, until) {
+    if (!cs.length) return [];
     const out = [];
-    for (let i = 0; i < cs.length; i++) {
-      if (i) { let t = cs[i - 1].t + step, k = 0;
-        while (t < cs[i].t - step / 2 && k < 600) { const p = cs[i - 1].c; out.push({ t, o: p, h: p, l: p, c: p, vol: 0, gap: true }); t += step; k++; } }
-      out.push(Object.assign({}, cs[i]));
+    if (!step || cs.length < 2) cs.forEach(c => out.push(Object.assign({}, c)));
+    else {
+      for (let i = 0; i < cs.length; i++) {
+        if (i) { let t = cs[i - 1].t + step, k = 0;
+          while (t < cs[i].t - step / 2 && k < 600) {
+            const p = cs[i - 1];
+            out.push({ t, o: p.c, h: p.c, l: p.c, c: p.c, vol: 0, gap: true, px: p.px, mc: p.mc });
+            t += step; k++;
+          } }
+        out.push(Object.assign({}, cs[i]));
+      }
+    }
+    if (step && until && out.length) {
+      let k = 0;
+      const end = Math.floor(until / step) * step;
+      while (out[out.length - 1].t < end - step / 2 && k < 600) {
+        const p = out[out.length - 1], t = p.t + step;
+        out.push({ t, o: p.c, h: p.c, l: p.c, c: p.c, vol: 0, gap: true, px: p.px, mc: p.mc });
+        k++;
+      }
     }
     return out;
   }
@@ -259,7 +276,25 @@
       ctx.fillText(opts.emptyText || (opts.loading ? "Loading chart…" : "Chart builds as trades come in"), w / 2, h / 2 - 10); ctx.textAlign = "left";
       canvas._last = null; canvas._chart = null; hideInspect(canvas); return null;
     }
-    const all = fillGaps(real, opts.step);
+    const until = opts.until != null ? opts.until : (Date.now() / 1000);
+    const all = fillGaps(real, opts.step, until);
+    if (opts.live != null && isFinite(opts.live) && opts.step && all.length) {
+      const bucket = Math.floor(until / opts.step) * opts.step;
+      let last = all[all.length - 1];
+      if (last.t < bucket - opts.step / 2) {
+        all.push({ t: bucket, o: last.c, h: last.c, l: last.c, c: last.c, vol: 0, gap: true, px: last.px, mc: last.mc });
+        last = all[all.length - 1];
+      }
+      if (Math.abs(last.t - bucket) <= opts.step / 2) {
+        last.c = opts.live;
+        last.h = Math.max(last.h, opts.live);
+        last.l = Math.min(last.l, opts.live);
+        if (opts.livePx != null) last.px = opts.livePx;
+        if (opts.liveMc != null) last.mc = opts.liveMc;
+        last.gap = false;
+        last.live = true;
+      }
+    }
     const slot = st.slot;
     const showVol = opts.volume !== false;
     const AX = 64, plotW = w - AX, top = 10, priceBot = Math.round(h * (showVol ? 0.70 : 0.86)), volTop = Math.round(h * 0.75), volBot = h - 22;
@@ -268,8 +303,10 @@
     const end = all.length - Math.round(st.off), cs = all.slice(Math.max(0, end - fit), end);
     const n = cs.length, bw = Math.max(2, Math.round(slot * 0.7));
     const X = i => plotW - (n - i) * slot + slot / 2;
+    const spanAll = all.length ? Math.max(...all.map(c => c.h)) - Math.min(...all.map(c => c.l)) : 0;
+    const spanVis = cs.length ? Math.max(...cs.map(c => c.h)) - Math.min(...cs.map(c => c.l)) : 0;
     canvas._info = { real: real.length, slots: all.length, step: opts.step || null, first: real[0].t, last: real[real.length - 1].t,
-                     sig: real.slice(-5).map(c => c.c.toPrecision(5)).join(","), slot, fit };
+                     sig: real.slice(-5).map(c => c.c.toPrecision(5)).join(","), slot, fit, spanAll, spanVis };
     const vis = cs.filter(c => !c.gap);
     let lo = Math.min(...(vis.length ? vis : cs).map(c => c.l)), hi = Math.max(...(vis.length ? vis : cs).map(c => c.h));
     const extraLines = [];
@@ -317,7 +354,12 @@
     cs.forEach((c, i) => { const x = X(i); if (c.t % nice === 0 && x - lastX >= 56 && x > 16 && x < plotW - 16) { ctx.fillText(hm(c.t), x, h - 6); lastX = x; } });
     if (lastX < 0 && n) ctx.fillText(hm(cs[0].t), Math.max(18, X(0)), h - 6);
     ctx.textAlign = "left";
-    if (st.off > 0) { ctx.fillStyle = C.ter; ctx.font = "11px " + FONT; ctx.fillText("‹ history", 4, top + 4); }
+    if (st.off > 0) {
+      ctx.fillStyle = C.ter; ctx.font = "11px " + FONT;
+      ctx.textAlign = "right"; ctx.textBaseline = "top";
+      ctx.fillText("‹ history", plotW - 6, top + 2);
+      ctx.textAlign = "left"; ctx.textBaseline = "alphabetic";
+    }
     const last = cs[n - 1], lc = last.c >= last.o ? C.up : C.down;
     const drawTag = v => {
       const ly = Math.round(Y(v)) + 0.5;

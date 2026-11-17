@@ -565,7 +565,7 @@
   function checkEvents() {
     const rows = (S.activity[0] && S.activity[0].rows) || [];
     const fresh = rows.filter(r => !evSeen.rows.has(r.id)); rows.forEach(r => evSeen.rows.add(r.id));
-    const au = card("auditor"), ac = au && au.current, audKey = ac && ac.text === "8/8 → Executor" ? ac.mint : null;
+    const au = card("auditor"), ac = au && au.current, audKey = ac && /^\d+\/\d+ → Executor$/.test(ac.text || "") ? ac.mint : null;
     const ex = card("executor"), sigKey = ex && ex.last ? ex.last.mint + ex.last.status : null;
     if (evSeen.ready) {
       if (fresh.some(r => r.kind === "sold" && /^\+/.test(String(r.value || "")))) confetti();
@@ -758,7 +758,7 @@
     if (a.name === "auditor") {
       const c = a.current;
       const strips = (c ? c.strips : Array(8).fill(null)).map(p => `<i class="${p === true ? "ok" : p === false ? "bad" : ""}"></i>`).join("");
-      const txt = c ? (c.text === "8/8 → Executor" ? `<span class="green">8/8 → Executor</span>` : c.text === "taking apart..." ? `<span class="cyan">taking apart...</span>` : `<span class="red">${esc(c.text)}</span>`) : `<span class="sec">No coin taken apart yet</span>`;
+      const txt = c ? (/^\d+\/\d+ → Executor$/.test(c.text || "") ? `<span class="green">${esc(c.text)}</span>` : c.text === "taking apart..." ? `<span class="cyan">taking apart...</span>` : `<span class="red">${esc(c.text)}</span>`) : `<span class="sec">No coin taken apart yet</span>`;
       return `<a class="acard" href="#/audit${c ? "/" + encodeURIComponent(c.mint) : ""}">${head}<div class="stat">${a.taken_apart} taken apart</div>
         <div class="sub cl">${c ? logo(c.name, c.logo, 18) + " " + esc(c.name) : ""}</div><div class="strips">${strips}</div>
         <div class="foot"><span>${txt}</span><span class="sec" style="margin-left:auto">${a.rejected} rejected</span></div></a>`;
@@ -1281,52 +1281,109 @@
 
   // ---------- real OHLCV: GeckoTerminal public API (no key, CORS *), fetched by the phone; ~30 calls/min/IP limit ----------
   // One request per coin per 30s, at most one in flight, 60s back-off after a 429/error. Desk prices are the fallback.
+  // Try the coin's pool first; on 404 (bonding-curve ids often miss), look up the token's pools on the right network
+  // (solana / bsc / base) and use the highest-liquidity pool. Merge with desk prices and extend flat candles to now.
   const OHLC = {}; let gtBusy = false, gtPauseUntil = 0, gtQueue = [];
+  const GT_POOL = {};   // mint -> resolved GT pool address
   // timeframe -> [GeckoTerminal endpoint, aggregate, seconds per candle]
   const TFS = { "1m": ["minute", 1, 60], "5m": ["minute", 5, 300], "15m": ["minute", 15, 900], "1h": ["hour", 1, 3600] };
   const tfFor = (mint, ageH) => S.tf[mint] || (ageH != null && ageH > 3 ? "5m" : "1m");
   const ohlcKey = (mint, ageH) => mint + "|" + tfFor(mint, ageH);
-  function gtWanted(mint, pool, ageH) {
-    const tf = tfFor(mint, ageH), key = mint + "|" + tf, o = OHLC[key];
-    if (!pool || (o && (o.loading || Date.now() - o.at < 30000))) return;
-    if (gtBusy || Date.now() < gtPauseUntil) {                       // queue it: runs as soon as the slot frees / back-off ends
-      if (!gtQueue.some(q => q[0] === key)) gtQueue.push([key, mint, pool, ageH]);
+  function gtNet(c) {
+    const ch = String((c && c.chain) || "solana").toLowerCase();
+    if (ch.indexOf("bnb") >= 0 || ch === "bsc") return "bsc";
+    if (ch.indexOf("base") >= 0) return "base";
+    return "solana";
+  }
+  function gtFetch(url) {
+    return fetch(url, { headers: { Accept: "application/json" }, referrerPolicy: "no-referrer", cache: "no-store" })
+      .then(r => { if (r.status !== 200) { const e = new Error("HTTP " + r.status); e.status = r.status; throw e; } return r.json(); });
+  }
+  function gtParseOhlcv(j, step) {
+    const l = (((j || {}).data || {}).attributes || {}).ohlcv_list || [];
+    return l.map(x => ({ t: +x[0], o: +x[1], h: +x[2], l: +x[3], c: +x[4], vol: +x[5] }))
+      .filter(c => [c.t, c.o, c.h, c.l, c.c].every(isFinite)).sort((a, b) => a.t - b.t);
+  }
+  function gtPickPool(j) {
+    const arr = (j && j.data) || [];
+    let best = null, bestLiq = -1;
+    arr.forEach(p => {
+      const a = (p && p.attributes) || {};
+      const id = (p && p.id) || "";
+      const addr = a.address || (id.indexOf("_") >= 0 ? id.slice(id.indexOf("_") + 1) : id);
+      const liq = +a.reserve_in_usd || 0;
+      if (addr && liq >= bestLiq) { best = addr; bestLiq = liq; }
+    });
+    return best;
+  }
+  function gtEnqueue(c) {
+    const key = ohlcKey(c.mint, c.age_h);
+    if (!gtQueue.some(q => q[0] === key)) gtQueue.push([key, c]);
+  }
+  function gtWanted(c) {
+    if (!c || !c.mint) return;
+    const mint = c.mint, tf = tfFor(mint, c.age_h), key = mint + "|" + tf, o = OHLC[key];
+    const pool = GT_POOL[mint] || c.pool;
+    const canLookup = !!(c.address || mint);
+    if ((!pool && !canLookup) || (o && (o.loading || Date.now() - o.at < 30000))) return;
+    if (gtBusy || Date.now() < gtPauseUntil) {
+      gtEnqueue(c);
       OHLC[key] = Object.assign(o || { cs: [] }, { loading: true, waitUntil: gtPauseUntil });
       if (!gtBusy) setTimeout(gtNext, Math.max(0, gtPauseUntil - Date.now()) + 50);
       return;
     }
     gtBusy = true;
     const [ep, agg, step] = TFS[tf];
+    const net = gtNet(c);
     OHLC[key] = Object.assign(o || { cs: [] }, { loading: true });
-    const url = `https://api.geckoterminal.com/api/v2/networks/solana/pools/${encodeURIComponent(pool)}/ohlcv/${ep}?aggregate=${agg}&limit=150&currency=usd`;
-    fetch(url, { headers: { Accept: "application/json" }, referrerPolicy: "no-referrer", cache: "no-store" })
-      .then(r => { if (r.status !== 200) { const e = new Error("HTTP " + r.status); e.status = r.status; throw e; } return r.json(); })
-      .then(j => {
-        const l = (((j || {}).data || {}).attributes || {}).ohlcv_list || [];
-        const cs = l.map(x => ({ t: +x[0], o: +x[1], h: +x[2], l: +x[3], c: +x[4], vol: +x[5] }))
-          .filter(c => [c.t, c.o, c.h, c.l, c.c].every(isFinite)).sort((a, b) => a.t - b.t);
-        OHLC[key] = { at: Date.now(), cs, label: tf, step, loading: false };
-      })
-      .catch(e => {
-        if (!e || !e.status || e.status === 429) {                                   // rate limited: back off 15s, keep it queued (shows "retry in Ns")
-          gtPauseUntil = Date.now() + 15000;
-          OHLC[key] = Object.assign(OHLC[key] || { cs: [] }, { at: 0, loading: true, waitUntil: gtPauseUntil });
-          if (!gtQueue.some(q => q[0] === key)) gtQueue.push([key, mint, pool, ageH]);
-        } else OHLC[key] = Object.assign(OHLC[key] || { cs: [] }, { at: Date.now(), loading: false, failed: true });   // unknown pool etc: desk prices, retry in 30s
-      })
-      .finally(() => { gtBusy = false; setTimeout(gtNext, Math.max(0, gtPauseUntil - Date.now()) + 50);
-        if (route().name === "coin" && decodeURIComponent(route().arg || "") === mint) render(); });
+    const token = c.address || mint;
+    const needLookup = !pool || GT_POOL[mint + ":miss:" + (c.pool || "")];
+    const lookupUrl = `https://api.geckoterminal.com/api/v2/networks/${net}/tokens/${encodeURIComponent(token)}/pools?page=1`;
+    const ohlcvUrl = p => `https://api.geckoterminal.com/api/v2/networks/${net}/pools/${encodeURIComponent(p)}/ohlcv/${ep}?aggregate=${agg}&limit=150&currency=usd`;
+    const failSoft = e => {
+      if (!e || !e.status || e.status === 429) {
+        gtPauseUntil = Date.now() + 15000;
+        OHLC[key] = Object.assign(OHLC[key] || { cs: [] }, { at: 0, loading: true, waitUntil: gtPauseUntil });
+        gtEnqueue(c);
+      } else OHLC[key] = Object.assign(OHLC[key] || { cs: [] }, { at: Date.now(), loading: false, failed: true });
+    };
+    const loadOhlcv = p => gtFetch(ohlcvUrl(p)).then(j => {
+      const cs = gtParseOhlcv(j, step);
+      GT_POOL[mint] = p;
+      OHLC[key] = { at: Date.now(), cs, label: tf, step, loading: false, pool: p };
+    });
+    const start = needLookup
+      ? gtFetch(lookupUrl).then(j => {
+          const p = gtPickPool(j);
+          if (!p) { const e = new Error("HTTP 404"); e.status = 404; throw e; }
+          GT_POOL[mint] = p;
+          return loadOhlcv(p);
+        })
+      : loadOhlcv(pool).catch(e => {
+          if (e && e.status === 404 && canLookup && !GT_POOL[mint]) {
+            GT_POOL[mint + ":miss:" + pool] = true;
+            return gtFetch(lookupUrl).then(j => {
+              const p = gtPickPool(j);
+              if (!p) throw e;
+              GT_POOL[mint] = p;
+              return loadOhlcv(p);
+            });
+          }
+          throw e;
+        });
+    start.catch(failSoft).finally(() => { gtBusy = false; setTimeout(gtNext, Math.max(0, gtPauseUntil - Date.now()) + 50);
+      if (route().name === "coin" && decodeURIComponent(route().arg || "") === mint) render(); });
   }
   function gtNext() {
     if (gtBusy || Date.now() < gtPauseUntil || !gtQueue.length) return;
     const r = route(), cur = r.name === "coin" ? decodeURIComponent(r.arg || "") : null;
-    gtQueue = gtQueue.filter(q => q[1] === cur);                       // only the coin on screen
+    gtQueue = gtQueue.filter(q => q[1] && q[1].mint === cur);
     const q = gtQueue.shift(); if (!q) return;
     if (OHLC[q[0]]) { OHLC[q[0]].loading = false; OHLC[q[0]].at = 0; }
-    gtWanted(q[1], q[2], q[3]);
+    gtWanted(q[1]);
   }
   // Desk fallback: db.prices 1-minute OHLC. A minute with one sample has o=c; open it at the previous close so the
-  // body shows the move (both are real prices). Minutes with no sample are not drawn.
+  // body shows the move (both are real prices). Minutes with no sample are filled as flat dashes out to now.
   function deskCandles(list, step) {
     const one = []; let prev = null;
     (list || []).forEach(c => { if (c.c == null) return; const t = typeof c.t === "number" ? c.t : Date.parse(c.t) / 1000;
@@ -1340,21 +1397,41 @@
       else out.push({ t: b, o: c.o, h: c.h, l: c.l, c: c.c, vol: c.vol > 0 ? c.vol : 0 }); });
     return out;
   }
+  function mergeCandles(gt, desk) {
+    const map = new Map();
+    (desk || []).forEach(c => { if (c && c.t) map.set(c.t, Object.assign({}, c)); });
+    (gt || []).forEach(c => { if (c && c.t) map.set(c.t, Object.assign({}, c)); });
+    return [...map.values()].sort((a, b) => a.t - b.t);
+  }
   const dash = v => v == null ? "—" : v;
   const mcMode = () => { try { return localStorage.getItem("desk.mcmode") === "1"; } catch (e) { return false; } };
   const setMcMode = on => { try { localStorage.setItem("desk.mcmode", on ? "1" : "0"); } catch (e) { /* private mode */ } };
   const applyMcMode = on => { setMcMode(!!on); const cvs = document.getElementById("candles"); if (cvs) cvs._lastC = null; render(); };
 
+  function coinAgeLabel(c) {
+    const t = c.launched_at ? Date.parse(c.launched_at) : NaN;
+    const min = isFinite(t) ? (Date.now() - t) / 60000 : (c.age_h != null ? c.age_h * 60 : NaN);
+    if (!isFinite(min) || min < 0) return "age —";
+    if (min < 60) return Math.round(min) + "m old";
+    if (min < 48 * 60) return Math.floor(min / 60) + "h old";
+    return Math.floor(min / 1440) + "d old";
+  }
+  function chipCleared(chip) {
+    const m = /^(\d+)\/(\d+)$/.exec(chip || "");
+    return !!(m && m[1] === m[2] && +m[1] > 0);
+  }
+
   // header price: the newest real price we have (GeckoTerminal's last candle close if it is newer than the desk sample)
   function livePrice(mint, c) {
     const g = OHLC[ohlcKey(mint, c.age_h)], last = g && g.cs && g.cs.length ? g.cs[g.cs.length - 1] : null;
     const deskT = c.price_ts ? Date.parse(c.price_ts) / 1000 : 0;
-    return last && (c.price == null || last.t + 60 > deskT) ? last.c : c.price;
+    const gtT = last ? last.t + ((g && g.step) || 60) : 0;
+    return last && (c.price == null || gtT >= deskT) ? last.c : c.price;
   }
   function chartSrc(mint, c) {
     const cur = tfFor(mint, c.age_h), g = OHLC[mint + "|" + cur];
     const wait = g && g.waitUntil && g.waitUntil > Date.now() ? Math.ceil((g.waitUntil - Date.now()) / 1000) : 0;
-    const src = g && g.cs && g.cs.length ? `${cur} · GeckoTerminal` : (g ? g.loading : !!c.pool) ? (wait ? `GeckoTerminal busy · retry in ${wait}s` : `Loading ${cur}…`)
+    const src = g && g.cs && g.cs.length ? `${cur} · GeckoTerminal` : (g ? g.loading : !!(c.pool || c.address)) ? (wait ? `GeckoTerminal busy · retry in ${wait}s` : `Loading ${cur}…`)
       : (c.candles || []).length ? `${cur} · desk prices` : "";
     return `<span class="tfs">${Object.keys(TFS).map(k => `<button type="button" data-tf="${k}" class="${k === cur ? "on" : ""}" aria-pressed="${k === cur}">${k}</button>`).join("")}</span><span class="srcl">${esc(src)}</span>`;
   }
@@ -1366,7 +1443,7 @@
     const c = S.coin[mint];
     if (!c) return loading;
     const p = c.position, x = c.exit;
-    const chipOk = c.audit_chip === "8/8";
+    const chipOk = chipCleared(c.audit_chip);
     const since = p && p.since_entry_pct;
     const left = x ? `${Math.floor(x.timeout_left_s / 3600)}h ${Math.floor(x.timeout_left_s % 3600 / 60)}m` : null;
     const chg = since != null ? [since, "since entry"] : c.stats.change24h != null ? [c.stats.change24h, "24h"] : c.stats.change1h != null ? [c.stats.change1h, "1h"] : null;
@@ -1387,7 +1464,7 @@
         <span class="cn">${l.n} · ${esc(l.name)}</span><span class="cv ${l.pass === false ? "red" : l.pass == null ? "ter" : ""}">${esc(l.value == null ? "—" : l.value)}</span></div>`).join("")}</div>` : "";
     const html = backbar("Home") + `<div class="coinhead">
         <div class="cname">${logo(c.name || mint, c.logo, 48)}<span class="cnm"><span>${esc(c.name || mint.slice(0, 4) + "…" + mint.slice(-3))}</span>
-          <span class="sec sm">${esc(c.symbol || "")} · ${esc(c.chain)} · ${c.age_h == null ? "age —" : c.age_h < 1 ? Math.round(c.age_h * 60) + "m old" : Math.floor(c.age_h) + "h old"}</span></span>
+          <span class="sec sm">${esc(c.symbol || "")} · ${esc(c.chain)} · ${coinAgeLabel(c)}</span></span>
           ${c.audit_chip ? `<a href="#/audit/${encodeURIComponent(mint)}" class="chip ${chipOk ? "ok" : "bad"}">🛡 ${esc(c.audit_chip)}</a>` : ""}</div>
         <button type="button" class="pricerow" id="pricetog" aria-pressed="${mcOn}" aria-label="${mcOn ? "Show token price" : "Show market cap"}"><span class="big pricebig glow">${mcOn ? tick("m" + mint, fac == null ? null : (livePrice(mint, c) == null ? null : livePrice(mint, c) * fac), v => v == null ? "n/a" : kfmt(v)) : tick("p" + mint, livePrice(mint, c), price)}</span>${mcOn ? `<span class="ter sm mclbl">MC</span>` : ""}
           ${chg ? `<span class="cpill lg2 ${chg[0] >= 0 ? "up" : "down"}">${chg[0] >= 0 ? "▲" : "▼"} ${Math.abs(chg[0]).toFixed(chg[1] === "since entry" ? 2 : 1)}% <span class="ter">${chg[1]}</span></span>` : ""}
@@ -1424,7 +1501,7 @@
       <div class="spacer"></div>${safeUrl(c.link) ? `<div class="ctabar"><a class="cta ${p && p.open ? "sell" : ""}" href="${esc(c.link)}" target="_blank" rel="noopener">${esc(c.button)}</a></div>` : ""}`;
     return { html, after() {
       bindManual(p, mint);
-      gtWanted(mint, c.pool, c.age_h);
+      gtWanted(c);
       const tf = tfFor(mint, c.age_h), step = TFS[tf][2], g = OHLC[mint + "|" + tf], gt = g && g.cs && g.cs.length ? g.cs : null;
       const cv = document.getElementById("candles");
       if (cv) {
@@ -1435,7 +1512,8 @@
       }
       const wrap = document.getElementById("chartcard");
       if (wrap) wrap.classList.toggle("loading", !!(g && g.loading && !gt));
-      const base = gt || deskCandles(c.candles, step), k = mcOn ? fac : 1;
+      const desk = deskCandles(c.candles, step);
+      const base = mergeCandles(gt, desk), k = mcOn ? fac : 1;
       const list = k == null ? [] : k === 1 ? base : base.map(q => ({ ...q, o: q.o * k, h: q.h * k, l: q.l * k, c: q.c * k }));
       const sc = v => v == null || k == null ? null : v * k;
       const rawList = k == null ? [] : list.map(q => {
@@ -1445,9 +1523,13 @@
       const ath = athFrom(c, base);
       const draft = S.lineDraft[mint] || {};
       const lines = (p && p.open) ? posChartLines(p.entryPrice, p.lines, draft, ath, sc) : (ath != null && k != null ? posChartLines(null, null, {}, ath, sc) : []);
+      const livePx = livePrice(mint, c);
       const lastC = DeskChart.candles(cv, rawList, null,
-                        { loading: !!c.pool && (!g || g.loading), step, min: 1, fmt: mcOn ? kfmt : undefined,
+                        { loading: !!(c.pool || c.address) && (!g || g.loading) && !base.length, step, min: 1, fmt: mcOn ? kfmt : undefined,
                           lines, entryLine: null,
+                          until: Date.now() / 1000,
+                          live: livePx == null || k == null ? null : (k === 1 ? livePx : livePx * k),
+                          livePx, liveMc: fac != null && livePx != null ? livePx * fac : null,
                           emptyText: mcOn && k == null ? "Market cap n/a" : undefined,
                           volume: volOn(),
                           mcFmt: kfmt,
@@ -1487,6 +1569,12 @@
         if (zout) zout.onclick = e => { e.preventDefault(); doZoom("out"); };
         if (zin) zin.onclick = e => { e.preventDefault(); doZoom("in"); };
         if (zfit) zfit.onclick = e => { e.preventDefault(); doZoom("fit"); };
+        // If the default window is almost flat next to the full series (e.g. a rug then a long tail to now), auto-fit.
+        if (!cv._autoFit && S.chartOff[mint] == null && lastC && cv._info && !(g && g.loading && !(gt && gt.length))) {
+          const inf = cv._info;
+          if (inf.spanAll > 0 && inf.spanVis < 0.15 * inf.spanAll) doZoom("fit");
+          if (!(g && g.loading)) cv._autoFit = true;
+        }
       }
       breathe(lastC);
       view.querySelectorAll("[data-tf]").forEach(b => b.onclick = e => { e.preventDefault(); if (S.tf[mint] === b.dataset.tf) return;
