@@ -2301,7 +2301,7 @@
     const applied = L.applied || [];
     const hist = L.history || [];
     const need = L.min_sample || 20;
-    const buckets = (L.buckets || []).filter(b => b.n >= 5).slice(0, 8);
+    const buckets = (L.buckets || []).filter(b => b.n >= 5).slice(0, 5);
     const changes = (applied.length ? applied : hist.slice(0, 4)).map(a =>
       `<div class="row"><span class="main"><div class="t">${esc(changeSentence(a))}</div></span></div>`
     ).join("");
@@ -2312,9 +2312,9 @@
       <div class="card learncard">
         <div class="s wrap">${esc(data)}. A group needs at least ${esc(need)} closed trades before a setting can change, and only soft settings move, by a small step. Scam checks, the $1M cap, bot limits and withdraw rules never change this way.</div>
         <div class="s wrap ter" style="margin-top:6px">Last run: ${esc(when)}${last && last.reason ? " · " + esc(last.reason) : ""}${last && last.error ? " · error, last good settings kept" : ""}</div>
-        ${btxt ? `<div class="learnlines">${btxt}</div>` : `<div class="s wrap" style="margin-top:8px">Not enough trades in any group yet to show a pattern (Mix fills are not tagged in the older book).</div>`}
         <div class="s" style="margin-top:10px;font-weight:650">${applied.length ? "What changed" : (hist.length ? "Recent changes" : "What changed")}</div>
         <div class="list" style="margin-top:6px">${changes || '<div class="row"><span class="main"><div class="s">No automatic changes yet.</div></span></div>'}</div>
+        ${btxt ? `<div class="learnlines">${btxt}</div>` : `<div class="s wrap" style="margin-top:8px">Not enough trades in any group yet to show a pattern (Mix fills are not tagged in the older book).</div>`}
         <div class="botbtns" style="margin-top:10px">${on ? btn("learn_off", "Turn off") : btn("learn_on", "Turn on")}${btn("learn", "Status")}${btn("learn_reset", "Reset defaults")}</div>
       </div>`;
   }
