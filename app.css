@@ -1281,3 +1281,8 @@ html[data-theme="daylight"] .cd.dn .dn1,html[data-theme="daylight"] .cd.dn .dv{c
 
 .learncard .list .row .t{white-space:normal;overflow:visible;text-overflow:unset;line-height:1.35}
 .view .sh,#pmode,.learncard{scroll-margin-top:72px}
+
+/* v51: full-width Live / Bot / Paper switch under the PnL title */
+.seg.wide.pmodes{width:100%;margin:0 0 12px;padding:3px;border-radius:12px;box-sizing:border-box}
+.seg.wide.pmodes button{flex:1 1 0;min-width:0;height:40px;line-height:40px;padding:0 8px;
+  font-size:15px;font-weight:650;border-radius:9px}

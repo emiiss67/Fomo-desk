@@ -7,7 +7,7 @@
   const QS = new URLSearchParams(location.search);
   const FIXTURE = LOCAL ? QS.get("fixture") : null;          // local screenshots only
   const POLL_VISIBLE_S = 2, POLL_HIDDEN_S = 15, POLL_S = POLL_VISIBLE_S, MAX_BACKOFF = 60;
-  const APP_VERSION = "v50";   // bump with every app release (also index.html ?v= and sw.js CACHE)
+  const APP_VERSION = "v51";   // bump with every app release (also index.html ?v= and sw.js CACHE)
   const AGENTS = ["scanner", "auditor", "analyst", "executor", "risk"];
   const TITLE = { scanner: "Scanner", auditor: "Auditor", analyst: "Analyst", executor: "Executor", risk: "Risk" };
   const COLOR = { scanner: "cyan", auditor: "", analyst: "yellow", executor: "green", risk: "pink" };
@@ -2381,9 +2381,11 @@
         <span class="sec">${sel.trades} trade${sel.trades === 1 ? "" : "s"} · ${sel.wins}W / ${sel.losses}L</span>
         <span class="v ${sel.pnl_usd >= 0 ? "green" : "red"}" style="margin-left:auto">${moneyS(sel.pnl_usd)}</span></div>
         <div class="list pnltrades">${(sel.items && sel.items.length) ? sel.items.map(tradeRow).join("") : dayRow(sel)}</div>` : "";
-    const modeBtns = MODE_ORDER.map(m => `<button type="button" data-pm="${m}" class="${m === mode ? "on" : ""}">${m}</button>`).join("");
-    return `<div class="sh"><h2>PnL calendar</h2><div class="seg" id="pmode">${modeBtns}</div></div>
-      <div class="gut"><div class="calcard">
+    const MODE_LABEL = {LIVE: "Live", BOT: "Bot", PAPER: "Paper"};
+    const modeBtns = MODE_ORDER.map(m => `<button type="button" data-pm="${m}" role="tab" aria-selected="${m === mode ? "true" : "false"}" class="${m === mode ? "on" : ""}">${MODE_LABEL[m]}</button>`).join("");
+    return `<div class="sh"><h2>PnL calendar</h2></div>
+      <div class="gut"><div class="seg wide pmodes" id="pmode" role="tablist" aria-label="PnL book">${modeBtns}</div>
+      <div class="calcard">
         <div class="calh"><button type="button" class="calnav" data-month="${prev}" aria-label="Previous month">‹</button>
           <div class="calt"><div class="t">${MON[M - 1]} ${Y} · ${mode}</div><div class="calsum ${mt.pnl >= 0 ? "green" : "red"}">${mt.n ? moneyS(Math.round(mt.pnl * 100) / 100) : '<span class="ter">no closed trades</span>'}</div>
           <div class="s">${mt.n ? mt.n + " trades · " + mt.w + "W / " + mt.l + "L" + (mt.inv ? " · " + pctS(100 * mt.pnl / mt.inv) : "") : "No closed trades this month"}</div></div>
@@ -2937,7 +2939,7 @@
   if ("serviceWorker" in navigator && !LOCAL) {
     let swReload = false;
     navigator.serviceWorker.addEventListener("controllerchange", () => { if (swReload) return; swReload = true; location.reload(); });
-    navigator.serviceWorker.register("sw.js?v=50", { updateViaCache: "none" }).then(reg => { try { reg.update(); } catch (e) {} }).catch(() => {});
+    navigator.serviceWorker.register("sw.js?v=51", { updateViaCache: "none" }).then(reg => { try { reg.update(); } catch (e) {} }).catch(() => {});
   }
   render();
   if (BASE) poll();
