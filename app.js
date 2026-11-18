@@ -2225,7 +2225,7 @@
         <div class="cell"><div class="k">Invested</div><div class="v">${p.cost_usd != null ? esc(money(p.cost_usd)) : "—"}<span class="ter"> · ${esc(sol(p.cost_sol))}</span></div></div>
         <div class="cell"><div class="k">${open ? "Value" : "Got back"}</div><div class="v">${p.value_usd != null ? esc(money(p.value_usd)) : "—"}<span class="ter"> · ${esc(sol(p.value_sol))}</span></div></div>
         <div class="cell"><div class="k">${open ? "PnL" : "Realized PnL"}</div><div class="v ${pnlCls}">${p.pnl_usd != null ? esc(moneyS(p.pnl_usd)) : "—"}<span class="ter"> · ${esc(solS(p.pnl_sol))}</span></div></div>
-        ${p.half_sold ? `<div class="cell"><div class="k">Half sold</div><div class="v ${cls(p.half_pnl_usd != null ? p.half_pnl_usd : p.half_pnl_sol)}">${p.half_pnl_usd != null ? esc(moneyS(p.half_pnl_usd)) : "—"<span class="ter"> · ${esc(solS(p.half_pnl_sol))}</span></div></div>` : ""}
+        ${p.half_sold ? `<div class="cell"><div class="k">Half sold</div><div class="v ${cls(p.half_pnl_usd != null ? p.half_pnl_usd : p.half_pnl_sol)}">${p.half_pnl_usd != null ? esc(moneyS(p.half_pnl_usd)) : "—"}<span class="ter"> · ${esc(solS(p.half_pnl_sol))}</span></div></div>` : ""}
         <div class="cell"><div class="k">Entry</div><div class="v">${esc(px(p.entry_price))}</div></div>
         <div class="cell"><div class="k">${open ? "Now" : "Exit"}</div><div class="v">${esc(px(open ? p.price : p.exit_price))}</div></div>
         <div class="cell"><div class="k">${open ? "Held for" : "Held"}</div><div class="v">${esc(heldFor(p.opened_at, open ? null : p.closed_at))}</div></div>
