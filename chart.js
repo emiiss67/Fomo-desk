@@ -198,7 +198,7 @@
 
   /* Coin candles. list = [{t (unix s), o, h, l, c, vol}] oldest first, real OHLCV only.
      Slot width is zoomable (pinch, wheel, or − / + / All). Right-aligned. Minutes with no trade
-     are a thin grey dash at the previous close (no invented price). Drag sideways to scroll back.
+     are flat candles at the previous close (carried forward, not an invented print). Drag sideways to scroll back.
      until (unix s) extends those dashes to "now" so the right edge is the current minute. */
   function fillGaps(cs, step, until) {
     if (!cs.length) return [];
@@ -225,7 +225,7 @@
     for (let i = 0; i < times.length; i++) {
       if (i) {
         let t = times[i - 1] + step, k = 0;
-        while (t < times[i] && k < 600) {
+        while (t < times[i] && k < 20000) {
           const p = out[out.length - 1];
           out.push({ t, o: p.c, h: p.c, l: p.c, c: p.c, vol: 0, gap: true, px: p.px, mc: p.mc });
           t += step; k++;
@@ -236,7 +236,7 @@
     if (until && out.length) {
       let k = 0;
       const end = bucket(until);
-      while (out[out.length - 1].t < end && k < 600) {
+      while (out[out.length - 1].t < end && k < 20000) {
         const p = out[out.length - 1], t = p.t + step;
         out.push({ t, o: p.c, h: p.c, l: p.c, c: p.c, vol: 0, gap: true, px: p.px, mc: p.mc });
         k++;
@@ -334,8 +334,7 @@
     const spanVis = cs.length ? Math.max(...cs.map(c => c.h)) - Math.min(...cs.map(c => c.l)) : 0;
     canvas._info = { real: real.length, slots: all.length, step: opts.step || null, first: real[0].t, last: real[real.length - 1].t,
                      sig: real.slice(-5).map(c => c.c.toPrecision(5)).join(","), slot, fit, spanAll, spanVis };
-    const vis = cs.filter(c => !c.gap);
-    let lo = Math.min(...(vis.length ? vis : cs).map(c => c.l)), hi = Math.max(...(vis.length ? vis : cs).map(c => c.h));
+    let lo = Math.min(...cs.map(c => c.l)), hi = Math.max(...cs.map(c => c.h));
     const extraLines = [];
     if (exitLine != null && isFinite(exitLine)) extraLines.push({ id: "risk", price: exitLine, label: "SL (risk)", color: C.orange, dash: true });
     if (entryLine != null && isFinite(entryLine)) extraLines.push({ id: "entry", price: entryLine, label: "Entry", color: C.cyan, drag: false });
@@ -364,30 +363,12 @@
     });
     cs.forEach((c, i) => {
       const x = X(i);
-      if (c.gap) { ctx.fillStyle = C.ter; ctx.fillRect(Math.round(x - Math.max(1, bw / 2)), Math.round(Y(c.c)) - 0.5, Math.max(2, bw), 2); return; }
-      const up = c.c >= c.o, col = up ? C.up : C.down, xs = Math.round(x) + 0.5;
+      const up = c.c >= c.o, col = c.gap ? C.ter : (up ? C.up : C.down), xs = Math.round(x) + 0.5;
       ctx.strokeStyle = col; ctx.lineWidth = 1;
       ctx.beginPath(); ctx.moveTo(xs, Y(c.h)); ctx.lineTo(xs, Y(c.l)); ctx.stroke();
       const y1 = Y(Math.max(c.o, c.c)), y2 = Y(Math.min(c.o, c.c));
-      ctx.fillStyle = col; ctx.fillRect(Math.round(x - bw / 2), y1, bw, Math.max(1, y2 - y1));
+      ctx.fillStyle = col; ctx.fillRect(Math.round(x - bw / 2), y1, bw, Math.max(c.gap ? 2 : 1, y2 - y1));
     });
-    // A thin thread through consecutive gap slots so a long forward-fill stays visible at All zoom.
-    ctx.save();
-    ctx.strokeStyle = C.ter; ctx.globalAlpha = 0.9; ctx.lineWidth = 1.25; ctx.setLineDash([3, 3]);
-    let run = [];
-    const flushGap = () => {
-      if (!run.length) return;
-      ctx.beginPath();
-      run.forEach((pt, i) => i ? ctx.lineTo(pt.x, pt.y) : ctx.moveTo(pt.x, pt.y));
-      ctx.stroke();
-      run = [];
-    };
-    cs.forEach((c, i) => {
-      if (!c.gap) { flushGap(); return; }
-      run.push({ x: X(i), y: Y(c.c) });
-    });
-    flushGap();
-    ctx.restore();
     const step = opts.step || 60, every = Math.max(1, Math.ceil(64 / slot)), lblStep = step * every;
     const nice = [60, 120, 300, 600, 900, 1800, 3600, 7200, 14400].find(x => x >= lblStep) || lblStep;
     ctx.fillStyle = C.ter; ctx.textBaseline = "alphabetic"; ctx.textAlign = "center";

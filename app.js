@@ -7,7 +7,7 @@
   const QS = new URLSearchParams(location.search);
   const FIXTURE = LOCAL ? QS.get("fixture") : null;          // local screenshots only
   const POLL_VISIBLE_S = 2, POLL_HIDDEN_S = 15, POLL_S = POLL_VISIBLE_S, MAX_BACKOFF = 60;
-  const APP_VERSION = "v44";   // bump with every app release (also index.html ?v= and sw.js CACHE)
+  const APP_VERSION = "v45";   // bump with every app release (also index.html ?v= and sw.js CACHE)
   const AGENTS = ["scanner", "auditor", "analyst", "executor", "risk"];
   const TITLE = { scanner: "Scanner", auditor: "Auditor", analyst: "Analyst", executor: "Executor", risk: "Risk" };
   const COLOR = { scanner: "cyan", auditor: "", analyst: "yellow", executor: "green", risk: "pink" };
@@ -17,12 +17,14 @@
   const hashD = () => { const m = location.hash.match(/[#?&]d=([^&]+)/); return m ? decodeURIComponent(m[1]).trim() : null; };
   const dp0 = hashD();
   if (dp0) localStorage.setItem("desk.d", dp0);
-  if (location.hash.startsWith("#d=") && dp0) history.replaceState(null, "", location.pathname + location.search + "#/home?d=" + encodeURIComponent(dp0));
+  if (location.hash.startsWith("#d=") && dp0) history.replaceState({ desk: 1, deskIdx: 0 }, "", location.pathname + location.search + "#/home?d=" + encodeURIComponent(dp0));
   const DP = dp0 || localStorage.getItem("desk.d");
   // keep ?d= in the fragment on every route, so "Open in Safari" and Add to Home Screen carry it
   const keepD = () => { if (!DP || FIXTURE || hashD()) return; const h = location.hash || "#/home";
-    history.replaceState(null, "", location.pathname + location.search + h + (h.includes("?") ? "&" : "?") + "d=" + encodeURIComponent(DP)); };
+    const url = location.pathname + location.search + h + (h.includes("?") ? "&" : "?") + "d=" + encodeURIComponent(DP);
+    history.replaceState(history.state && history.state.desk ? history.state : { desk: 1, deskIdx: (history.state && history.state.deskIdx) || 0 }, "", url); };
   keepD();
+  if (!history.state || !history.state.desk) history.replaceState({ desk: 1, deskIdx: 0 }, "", location.pathname + location.search + (location.hash || "#/home"));
   // Home Screen apps on iPhone open the manifest start_url and have their own storage, so the start_url must carry d
   if (DP && !FIXTURE) { try {
     const root = new URL("./", location.href).href;
@@ -337,11 +339,66 @@
   }
   applyAppearance();
 
+  // ---------- FX: live EUR/USD, cached fallback, never invented ----------
+  const EURFX = { eurUsd: null, at: 0, src: null, pending: null };
+  try {
+    const o = JSON.parse(localStorage.getItem("desk.eurUsd") || "null");
+    if (o && +o.eurUsd > 0 && isFinite(+o.eurUsd)) { EURFX.eurUsd = +o.eurUsd; EURFX.at = o.at || 0; EURFX.src = o.src || "cache"; }
+  } catch (e) {}
+  const hasEur = () => EURFX.eurUsd != null && EURFX.eurUsd > 0 && isFinite(EURFX.eurUsd);
+  const usdToEur = usd => (!hasEur() || usd == null || !isFinite(usd)) ? null : usd / EURFX.eurUsd;
+  const solUsdNow = () => {
+    const a = S.bot && S.bot.chart && S.bot.chart.sol_usd;
+    if (a != null && +a > 0) return +a;
+    const b = S.state && (S.state.sol_usd || (S.state.chart && S.state.chart.sol_usd));
+    return (b != null && +b > 0) ? +b : null;
+  };
+  const solToEur = (sol, rate) => {
+    const px = (rate != null && +rate > 0) ? +rate : solUsdNow();
+    if (!hasEur() || sol == null || !isFinite(sol) || !px) return null;
+    return sol * px / EURFX.eurUsd;
+  };
+  const fxSym = () => hasEur() ? "€" : "US$";
+  function fmtMoney(usd, signed) {
+    if (usd == null || !isFinite(usd)) return "—";
+    const v = hasEur() ? usdToEur(usd) : usd;
+    if (v == null || !isFinite(v)) return "—";
+    const body = (hasEur() ? "€" : "US$") + Math.abs(v).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    if (signed) return (v > 0 ? "+" : v < 0 ? "-" : "") + body;
+    return (v < 0 ? "-" : "") + body;
+  }
+  async function refreshFx() {
+    if (EURFX.pending) return EURFX.pending;
+    const specs = [
+      ["https://api.frankfurter.app/latest?from=EUR&to=USD", d => d && d.rates && d.rates.USD],
+      ["https://open.er-api.com/v6/latest/EUR", d => d && d.rates && d.rates.USD]
+    ];
+    EURFX.pending = (async () => {
+      for (const [url, pick] of specs) {
+        try {
+          const r = await fetch(url, { headers: { Accept: "application/json" }, cache: "no-store" });
+          if (!r.ok) continue;
+          const v = +pick(await r.json());
+          if (v > 0 && isFinite(v)) {
+            const prev = EURFX.eurUsd;
+            EURFX.eurUsd = v; EURFX.at = Date.now(); EURFX.src = new URL(url).host;
+            try { localStorage.setItem("desk.eurUsd", JSON.stringify({ eurUsd: v, at: EURFX.at, src: EURFX.src })); } catch (e) {}
+            if (prev !== v && typeof render === "function") render();
+            return;
+          }
+        } catch (e) {}
+      }
+    })();
+    try { await EURFX.pending; } finally { EURFX.pending = null; }
+  }
+  refreshFx();
+  setInterval(refreshFx, 15 * 60 * 1000);
+
   // ---------- helpers ----------
   const esc = s => String(s == null ? "" : s).replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
   const safeUrl = u => { try { const x = new URL(u); return x.protocol === "https:" ? u : null; } catch (e) { return null; } };
   const ext = (u, inner, cls) => { const s = safeUrl(u); return s ? `<a class="${cls || ""}" href="${esc(s)}" target="_blank" rel="noopener">${inner}</a>` : inner; };
-  const money = v => v == null ? "—" : (v < 0 ? "-" : "") + "$" + Math.abs(v).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  const money = v => fmtMoney(v, false);
   const shortAddr = a => { a = a == null ? "" : String(a); return a.length <= 12 ? a : a.slice(0, 4) + "…" + a.slice(-4); };
   function activeBook() {
     if (S.book === "misses" || S.book === "LIVE" || S.book === "PAPER") return S.book;
@@ -439,10 +496,24 @@
       return new Date(iso).toLocaleTimeString("en-GB", { timeZone: "Europe/Vilnius", hour: "2-digit", minute: "2-digit", hour12: false });
     } catch (e) { return ""; }
   }
-  const moneyS = v => v == null ? "—" : (v >= 0 ? "+" : "-") + "$" + Math.abs(v).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-  const kfmt = v => v == null ? "—" : v >= 1e6 ? "$" + (v / 1e6).toFixed(2) + "M" : v >= 1e3 ? "$" + (v / 1e3).toFixed(1) + "K" : "$" + v.toFixed(0);
-  // same subscript-zero format as the chart axis: 0.000000001458 -> "$0.0₈1458" (never "e-" notation)
-  const price = v => v == null || !isFinite(v) ? "—" : "$" + (v >= 1 && v < 1000 ? v.toFixed(4) : window.DeskChart.fmtP(v));
+  const moneyS = v => fmtMoney(v, true);
+  const kfmt = v => {
+    if (v == null || !isFinite(v)) return "—";
+    const x = hasEur() ? usdToEur(v) : v;
+    if (x == null || !isFinite(x)) return "—";
+    const s = fxSym();
+    const a = Math.abs(x);
+    const body = a >= 1e6 ? s + (a / 1e6).toFixed(2) + "M" : a >= 1e3 ? s + (a / 1e3).toFixed(1) + "K" : s + a.toFixed(0);
+    return x < 0 ? "-" + body : body;
+  };
+  // same subscript-zero format as the chart axis: 0.000000001458 -> "€0.0₈1458" (never "e-" notation)
+  const price = v => {
+    if (v == null || !isFinite(v)) return "—";
+    const x = hasEur() ? usdToEur(v) : v;
+    if (x == null || !isFinite(x)) return "—";
+    const body = (x >= 1 && x < 1000) ? Math.abs(x).toFixed(4) : window.DeskChart.fmtP(Math.abs(x));
+    return (x < 0 ? "-" : "") + fxSym() + body;
+  };
   const sgn = (v, d = 2) => v == null ? "—" : (v >= 0 ? "+" : "") + v.toFixed(d) + "%";
   // Mark-to-market: size * price / entry. Missing price or entry → null, never a made-up number.
   function markValue(size, entry, px) {
@@ -482,6 +553,27 @@
   const hm = iso => iso ? new Date(iso).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", hour12: false }) : "";
   const card = n => S.state && S.state.agents.find(a => a.name === n);
   const route = () => { const h = location.hash.replace(/^#\/?/, "").split("?")[0].split("/"); return { name: h[0] || "home", arg: h[1] || null }; };
+  function routeUrl(hash) {
+    let h = hash || "#/home";
+    if (h.charAt(0) !== "#") h = "#/" + h.replace(/^\/?/, "");
+    if (DP && !FIXTURE && !/[?&]d=/.test(h)) h += (h.includes("?") ? "&" : "?") + "d=" + encodeURIComponent(DP);
+    return location.pathname + location.search + h;
+  }
+  let navLock = false;
+  function go(hash, replace) {
+    const url = routeUrl(hash);
+    const prev = (history.state && history.state.deskIdx) || 0;
+    const st = { desk: 1, deskIdx: replace ? prev : prev + 1 };
+    navLock = true;
+    if (replace) history.replaceState(st, "", url);
+    else history.pushState(st, "", url);
+    navLock = false;
+    navAnim = !replace;
+    window.scrollTo(0, 0);
+    render();
+    if (S.state) loadRoute(null).then(() => render()).catch(() => {});
+  }
+  function canGoBack() { return !!(history.state && history.state.desk && (history.state.deskIdx || 0) > 0); }
   const sk = (h, w, extra) => `<div class="sk" style="height:${h}px;${w ? "width:" + w + ";" : ""}${extra || ""}"></div>`;
   // coin logo: DexScreener info.imageUrl (server checks it is on DexScreener's CDN); no logo / load error -> letter
   const HUES = [200, 145, 48, 330, 270, 20, 180, 0];
@@ -738,7 +830,8 @@
     </div>${extra || ""}`;
   }
   function backbar(label, href) {
-    return `<div class="navbar"><a class="back" href="${href || "#/home"}">‹ ${esc(label || "Back")}</a><span class="title"></span>
+    const fallback = href || "#/home";
+    return `<div class="navbar"><a class="back" href="${esc(fallback)}" data-back="1">‹ ${esc(label || "Back")}</a><span class="title"></span>
       ${S.state && S.state.paper ? '<span class="pill paper">PAPER</span>' : ""}</div>`;
   }
   function unreadCount() {
@@ -842,12 +935,30 @@
     }
     return m.mint ? String(m.mint).slice(0, 2) : "?";
   }
+  function trimSol(n) {
+    return Number(n).toFixed(6).replace(/0+$/, "").replace(/\.$/, "");
+  }
+  function markBuyLabel(m) {
+    const size = (m.sizeSol != null && isFinite(m.sizeSol) && Math.abs(m.sizeSol) >= 5e-7) ? Number(m.sizeSol) : null;
+    const eur = (m.sizeUsd != null && isFinite(m.sizeUsd) && hasEur()) ? usdToEur(m.sizeUsd)
+      : solToEur(size, m.solUsd);
+    if (eur != null && isFinite(eur)) return "Buy €" + Math.abs(eur).toFixed(2);
+    if (m.sizeUsd != null && isFinite(m.sizeUsd)) return "Buy US$" + Number(m.sizeUsd).toFixed(2);
+    if (size != null) return "Buy " + trimSol(size) + " SOL";
+    return "Buy";
+  }
+  function markSellLabel(m) {
+    const pnlEur = (m.pnlUsd != null && isFinite(m.pnlUsd) && hasEur()) ? usdToEur(m.pnlUsd)
+      : solToEur(m.pnlSol, m.solUsd);
+    if (pnlEur != null && isFinite(pnlEur)) return (pnlEur >= 0 ? "+" : "-") + "€" + Math.abs(pnlEur).toFixed(2);
+    if (m.pnlUsd != null && isFinite(m.pnlUsd)) return (m.pnlUsd >= 0 ? "+" : "-") + "US$" + Math.abs(m.pnlUsd).toFixed(2);
+    if (m.pnlSol != null && isFinite(m.pnlSol)) return (m.pnlSol >= 0 ? "+" : "") + trimSol(m.pnlSol) + " SOL";
+    return m.text || (m.kind === "stopped" ? "Stop" : "Sell");
+  }
   function enrichMarks(list) {
     return (list || []).map(m => {
       const kind = m.kind || (/^Bought /i.test(m.text || "") ? "bought" : (m.color === "red" ? "stopped" : "sold"));
-      const size = m.sizeUsd != null ? money(m.sizeUsd) : (m.sizeSol != null && isFinite(m.sizeSol)
-        ? (Number(m.sizeSol).toFixed(4).replace(/0+$/, "").replace(/\.$/, "") + " SOL") : "");
-      const label = m.label || (kind === "bought" ? (size ? "Buy " + size : "Buy") : (m.text || (kind === "stopped" ? "Stop" : "Sell")));
+      const label = m.label || (kind === "bought" ? markBuyLabel(m) : markSellLabel({ ...m, kind }));
       return { ...m, kind, label, name: markName({ ...m, kind }), logo: logoFor(m.mint) };
     });
   }
@@ -1246,12 +1357,12 @@
 
   function auditMint() { const a = card("auditor"); return a && a.current ? a.current.mint : null; }
   function auditScreen(arg) {
-    if (!S.state) return backbar("Home") + `<div style="width:220px;margin:16px auto">${sk(236)}</div><div class="gut">${sk(360, null, "border-radius:14px")}</div>`;
+    if (!S.state) return backbar("Back", "#/home") + `<div style="width:220px;margin:16px auto">${sk(236)}</div><div class="gut">${sk(360, null, "border-radius:14px")}</div>`;
     const mint = arg || auditMint();
     const a = mint && S.audit[mint];
     if (!mint || (a && a.state === "none") || S.missing[`audit/${mint}.json`])
-      return { html: backbar("Home") + `<div class="empty" style="padding-top:120px">No coin taken apart yet</div>`, after() {} };
-    if (!a) return backbar("Home") + `<div style="width:220px;margin:16px auto">${sk(236)}</div><div class="gut">${sk(360, null, "border-radius:14px")}</div>`;
+      return { html: backbar("Back", "#/home") + `<div class="empty" style="padding-top:120px">No coin taken apart yet</div>`, after() {} };
+    if (!a) return backbar("Back", "#/home") + `<div style="width:220px;margin:16px auto">${sk(236)}</div><div class="gut">${sk(360, null, "border-radius:14px")}</div>`;
     const present = a.layers.filter(l => l.pass !== null).length;     // only layers the server sent
     const b = beam[mint] || (beam[mint] = { shown: RM() ? present : 0, running: false });
     if (RM()) b.shown = present;
@@ -1260,7 +1371,7 @@
       ? `<div class="vt ${a.state === "rejected" ? "red" : "green"}">${esc(a.header.title)}</div><div class="vs">${esc(a.header.subtitle)}</div>`
       : `<div class="vt cyan">Taking apart...</div><div class="vs">${esc(a.name)}</div>`;
     const rows = a.layers.map((l, i) => `<div class="lrow"><span>${l.n} · ${esc(l.name)}</span><span class="lv ${i < b.shown ? (l.pass ? "" : "red") : "nc"}">${i < b.shown ? esc(l.value) : "not checked"}</span></div>`).join("");
-    const html = backbar("Home") + `<div class="coinhead"><a class="cname" href="${coinHref(mint)}">${logo(a.name, a.logo, 36)}${esc(a.name)}<span class="ter" style="font-size:17px;font-weight:400">Coin page ›</span></a></div>
+    const html = backbar("Back", "#/home") + `<div class="coinhead"><a class="cname" href="${coinHref(mint)}">${logo(a.name, a.logo, 36)}${esc(a.name)}<span class="ter" style="font-size:17px;font-weight:400">Coin page ›</span></a></div>
       <div class="discs" id="discs">${discs}<div class="beam" id="beam"></div></div>
       <div class="verdict" id="verdict">${head}</div>
       <div class="list" id="lrows">${rows}</div>
@@ -1496,10 +1607,10 @@
     return `<span class="tfs">${Object.keys(TFS).map(k => `<button type="button" data-tf="${k}" class="${k === cur ? "on" : ""}" aria-pressed="${k === cur}">${k}</button>`).join("")}</span><span class="srcl">${esc(src)}</span>`;
   }
   function coinScreen(mint) {
-    const loading = backbar("Home") + `<div class="gut">${sk(34, "60%")}${sk(18, "40%", "margin-top:8px")}${sk(56, "50%", "margin-top:14px")}</div>
+    const loading = backbar("Back", "#/home") + `<div class="gut">${sk(34, "60%")}${sk(18, "40%", "margin-top:8px")}${sk(56, "50%", "margin-top:14px")}</div>
       <div class="gut" style="margin-top:14px">${sk(260)}</div><div class="gut" style="margin-top:16px">${sk(130, null, "border-radius:14px")}</div>`;
     if (!S.state) return loading;
-    if (S.missing[`coin/${mint}.json`]) return { html: backbar("Home") + `<div class="empty" style="padding-top:120px">Not on the desk tonight</div>`, after() {} };
+    if (S.missing[`coin/${mint}.json`]) return { html: backbar("Back", "#/home") + `<div class="empty" style="padding-top:120px">Not on the desk tonight</div>`, after() {} };
     const c = S.coin[mint];
     if (!c) return loading;
     const p = c.position, x = c.exit;
@@ -1531,7 +1642,7 @@
     const audit = au && au.layers ? `<div class="sh"><h2>Audit</h2><a href="#/audit/${encodeURIComponent(mint)}">${esc(c.audit_chip || "")} ›</a></div>
       <div class="list glass checklist">${au.layers.map(l => `<div class="ck"><span class="tk ${l.pass === true ? "ok" : l.pass === false ? "bad" : "nc"}">${l.pass === true ? "✓" : l.pass === false ? "✕" : "–"}</span>
         <span class="cn">${l.n} · ${esc(l.name)}</span><span class="cv ${l.pass === false ? "red" : l.pass == null ? "ter" : ""}">${esc(l.value == null ? "—" : l.value)}</span></div>`).join("")}</div>` : "";
-    const html = backbar("Home") + `<div class="coinhead">
+    const html = backbar("Back", "#/home") + `<div class="coinhead">
         <div class="cname">${logo(c.name || mint, c.logo, 48)}<span class="cnm"><span>${esc(c.name || mint.slice(0, 4) + "…" + mint.slice(-3))}</span>
           <span class="sec sm">${esc(c.symbol || "")} · ${esc(c.chain)} · ${coinAgeLabel(c)}</span></span>
           ${c.audit_chip ? `<a href="#/audit/${encodeURIComponent(mint)}" class="chip ${chipOk ? "ok" : "bad"}">🛡 ${esc(c.audit_chip)}</a>` : ""}</div>
@@ -2065,15 +2176,21 @@
     const solPts = (name) => ((ch.ranges && ch.ranges[name]) || {}).points_sol || [];
     const hasUsd = RANGE_ORDER.some(n => usdPts(n).length);
     const hasSol = RANGE_ORDER.some(n => solPts(n).length);
-    if (!S.botUnit) S.botUnit = (usdPts("ALL").length >= 2 && usdPts("ALL").length >= solPts("ALL").length) ? "usd" : "sol";
-    if (S.botUnit === "usd" && !hasUsd && hasSol) S.botUnit = "sol";
-    const unit = S.botUnit === "usd" ? "usd" : "sol";
+    const solPx = (ch.sol_usd != null && +ch.sol_usd > 0) ? +ch.sol_usd : solUsdNow();
+    const canEur = hasEur() && (hasUsd || (hasSol && solPx));
+    if (!S.botUnit) S.botUnit = canEur ? "eur" : ((usdPts("ALL").length >= 2 && usdPts("ALL").length >= solPts("ALL").length) ? "usd" : "sol");
+    if (S.botUnit === "eur" && !canEur) S.botUnit = hasUsd ? "usd" : "sol";
+    if (S.botUnit === "usd" && !hasUsd && hasSol) S.botUnit = canEur ? "eur" : "sol";
+    const unit = S.botUnit === "sol" ? "sol" : (S.botUnit === "usd" ? "usd" : "eur");
     const botRange = S.botRange || "LIVE";
     const pickRange = (want) => {
       const start = Math.max(0, RANGE_ORDER.indexOf(want));
       const tryName = (n) => {
         const r = (ch.ranges && ch.ranges[n]) || { points_sol: [], points_usd: [], marks: [] };
-        const pts = unit === "usd" ? (r.points_usd || []) : (r.points_sol || []);
+        const pts = unit === "sol" ? (r.points_sol || [])
+          : unit === "usd" ? (r.points_usd || [])
+          : (r.points_usd || []).length ? (r.points_usd || []).map(p => [p[0], usdToEur(p[1])])
+          : (solPx ? (r.points_sol || []).map(p => [p[0], solToEur(p[1], solPx)]) : []);
         return pts.length ? { name: n, rng: r, points: pts } : null;
       };
       const own = tryName(want);
@@ -2097,15 +2214,19 @@
       if (!Number.isFinite(n) || Math.abs(n) < 5e-7) return "0 SOL";
       return (n > 0 ? "+" : "") + n.toFixed(4).replace(/0+$/, "").replace(/\.$/, "") + " SOL";
     };
-    const start = unit === "usd" ? ch.start_usd : ch.start_sol;
-    const today = unit === "usd" ? ch.today_pct_usd : ch.today_pct_sol;
-    const mult = unit === "usd" ? ch.multiplier_usd : ch.multiplier_sol;
-    const headline = unit === "usd" ? (ch.value_usd != null ? money(ch.value_usd) : null)
-      : (ch.value_sol != null ? sol(ch.value_sol) : null);
-    const unitBtns = `<div class="ranges" style="margin-top:8px">${["sol","usd"].map(u => {
-      const on = u === unit, empty = u === "usd" ? !hasUsd : !hasSol;
+    const start = unit === "sol" ? ch.start_sol : unit === "usd" ? ch.start_usd
+      : (ch.start_usd != null ? usdToEur(ch.start_usd) : solToEur(ch.start_sol, solPx));
+    const today = unit === "sol" ? ch.today_pct_sol : (ch.today_pct_usd != null ? ch.today_pct_usd : ch.today_pct_sol);
+    const mult = unit === "sol" ? ch.multiplier_sol : (ch.multiplier_usd != null ? ch.multiplier_usd : ch.multiplier_sol);
+    const eurVal = ch.value_usd != null ? usdToEur(ch.value_usd) : solToEur(ch.value_sol, solPx);
+    const headline = unit === "sol" ? (ch.value_sol != null ? sol(ch.value_sol) : null)
+      : unit === "usd" ? (ch.value_usd != null ? money(ch.value_usd) : null)
+      : (eurVal != null ? (eurVal < 0 ? "-" : "") + "€" + Math.abs(eurVal).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : null);
+    const unitBtns = `<div class="ranges" style="margin-top:8px">${(canEur || hasUsd || hasSol) ? (canEur ? ["eur","sol"] : ["usd","sol"]).map(u => {
+      const on = (u === "eur" && unit === "eur") || (u === unit);
+      const empty = u === "sol" ? !hasSol : (u === "usd" ? !hasUsd : !canEur);
       return `<button type="button" data-botunit="${u}" class="${on ? "on" : ""}" ${empty && !on ? "disabled" : ""}>${u.toUpperCase()}</button>`;
-    }).join("")}</div>`;
+    }).join("") : ""}</div>`;
     const kv = (k, v, c) => `<div class="kv"><span class="sec">${k}</span><span class="${c || ""}">${v}</span></div>`;
     const btn = (pl, label, extra) => { const l = tgLink(pl); return l ? `<a class="mbtn${extra ? " " + extra : ""}" href="${esc(l)}" target="_blank" rel="noopener">${esc(label)}</a>` : ""; };
     const d = b.day || {}, lim = b.limits || {};
@@ -2135,7 +2256,7 @@
        <div class="bigrow"><span class="big glow">${headline != null ? esc(headline) : "—"}</span></div>
        <div class="today">${todayLine}
        ${mult != null ? `<span class="pill mult">${esc(String(mult))}×</span>` : ""}
-       <span class="sec">· realized ${esc(solZ(b.realized_today_sol))}</span></div>
+       <span class="sec">· realized ${esc((() => { const e = unit === "sol" ? null : solToEur(b.realized_today_sol, solPx); return e == null ? solZ(b.realized_today_sol) : ((e > 0 ? "+" : e < 0 ? "-" : "") + "€" + Math.abs(e).toFixed(2)); })())}</span></div>
       <div class="chartwrap"><canvas id="botline"></canvas>${viewed.fallback ? "" : (points.length ? "" : '<div class="chartempty">no data yet</div>')}</div>
       <div class="ranges">${RANGE_ORDER.map(r => `<button type="button" data-botrange="${r}" class="${r === botRange ? "on" : ""}">${r}</button>`).join("")}</div>
       ${chartHint}${unitBtns}</section>
@@ -2370,8 +2491,31 @@
     view.querySelectorAll("[data-book]").forEach(b => b.onclick = () => { S.book = b.dataset.book; chartPrev = null; render(); });
   }
   let navAnim = false;
-  window.addEventListener("hashchange", async () => {
+  document.addEventListener("click", e => {
+    const a = e.target.closest && e.target.closest("a");
+    if (!a || a.target === "_blank" || a.hasAttribute("download") || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
+    const href = a.getAttribute("href") || "";
+    if (a.getAttribute("data-back") === "1") {
+      e.preventDefault();
+      if (canGoBack()) history.back();
+      else go(href || "#/home", true);
+      return;
+    }
+    if (href.charAt(0) === "#" && href.charAt(1) === "/") {
+      if (routeUrl(href) === location.pathname + location.search + location.hash) return;
+      e.preventDefault();
+      go(href);
+    }
+  }, true);
+  window.addEventListener("popstate", async () => {
     keepD(); navAnim = true;
+    window.scrollTo(0, 0); render();
+    if (S.state) { try { await loadRoute(null); } catch (e) {} render(); }
+  });
+  window.addEventListener("hashchange", async () => {
+    if (navLock) return;
+    keepD(); navAnim = true;
+    if (!history.state || !history.state.desk) history.replaceState({ desk: 1, deskIdx: (history.state && history.state.deskIdx) || 0 }, "", location.pathname + location.search + location.hash);
     window.scrollTo(0, 0); render();
     if (S.state) { try { await loadRoute(null); } catch (e) {} render(); }
   });
@@ -2380,7 +2524,7 @@
   if ("serviceWorker" in navigator && !LOCAL) {
     let swReload = false;
     navigator.serviceWorker.addEventListener("controllerchange", () => { if (swReload) return; swReload = true; location.reload(); });
-    navigator.serviceWorker.register("sw.js?v=37", { updateViaCache: "none" }).then(reg => { try { reg.update(); } catch (e) {} }).catch(() => {});
+    navigator.serviceWorker.register("sw.js?v=45", { updateViaCache: "none" }).then(reg => { try { reg.update(); } catch (e) {} }).catch(() => {});
   }
   render();
   if (BASE) poll();
