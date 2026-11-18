@@ -7,7 +7,7 @@
   const QS = new URLSearchParams(location.search);
   const FIXTURE = LOCAL ? QS.get("fixture") : null;          // local screenshots only
   const POLL_VISIBLE_S = 2, POLL_HIDDEN_S = 15, POLL_S = POLL_VISIBLE_S, MAX_BACKOFF = 60;
-  const APP_VERSION = "v48";   // bump with every app release (also index.html ?v= and sw.js CACHE)
+  const APP_VERSION = "v49";   // bump with every app release (also index.html ?v= and sw.js CACHE)
   const AGENTS = ["scanner", "auditor", "analyst", "executor", "risk"];
   const TITLE = { scanner: "Scanner", auditor: "Auditor", analyst: "Analyst", executor: "Executor", risk: "Risk" };
   const COLOR = { scanner: "cyan", auditor: "", analyst: "yellow", executor: "green", risk: "pink" };
@@ -724,7 +724,8 @@
   }
   async function loadRoute(changed) {
     const r = route(), ch = f => !changed || changed.includes(f);
-    if (r.name === "coin" && r.arg && (ch(`coin/${r.arg}.json`) || !S.coin[r.arg])) await getOpt(`coin/${r.arg}.json`, S.coin, r.arg);
+    if (r.name === "coin" && r.arg && (ch(`coin/${r.arg}.json`) || !S.coin[r.arg] || S.coin[r.arg]._stub))
+      await getOpt(`coin/${r.arg}.json`, S.coin, r.arg);
     if (r.name === "coin" && r.arg && S.coin[r.arg] && S.coin[r.arg].audit_chip && (ch(`audit/${r.arg}.json`) || !S.audit[r.arg])) await getOpt(`audit/${r.arg}.json`, S.audit, r.arg);
     if (r.name === "home") for (const o of openPositions()) if (ch(`coin/${o.row.mint}.json`) || !S.coin[o.row.mint]) await getOpt(`coin/${o.row.mint}.json`, S.coin, o.row.mint);
     if (r.name === "bot" && r.arg && S.bot) {
@@ -1476,6 +1477,7 @@
         const logo = (top && ((top.info && top.info.imageUrl) || (top.baseToken && top.baseToken.logoURI))) || dsCdn(mint);
         const info = { at: Date.now(), pair: top && top.pairAddress, liq, mcap: isFinite(mcap) ? mcap : null, price: isFinite(price) ? price : null, logo, failed: !top };
         DS_INFO[mint] = info;
+        if (info.price != null) pushLiveTick(mint, info.price);
         return info;
       })
       .catch(() => { const info = { at: Date.now(), failed: true }; if (!DS_INFO[mint]) DS_INFO[mint] = info; return DS_INFO[mint]; });
@@ -1527,7 +1529,7 @@
       const r = route();
       const onChart = (r.name === "coin" && decodeURIComponent(r.arg || "") === mint)
         || (r.name === "bot" && routeMint() === mint);
-      if (onChart && px != null && px !== prev && !document.querySelector("canvas.inspecting, canvas.linedrag, canvas.holding"))
+      if (onChart && px != null && !document.querySelector("canvas.inspecting, canvas.linedrag, canvas.holding"))
         render();
     }).catch(() => {}).finally(() => { liveBusy = false; scheduleLive(); });
   }
@@ -1740,20 +1742,76 @@
     const cur = tfFor(mint, c.age_h), g = OHLC[mint + "|" + cur];
     const wait = g && g.waitUntil && g.waitUntil > Date.now() ? Math.ceil((g.waitUntil - Date.now()) / 1000) : 0;
     const named = (c && c.candle_source) ? String(c.candle_source) : "";
+    const liveN = (LIVE_TICKS[mint] || []).length;
     const src = g && g.cs && g.cs.length ? `${cur} · GeckoTerminal`
-      : named && named !== "desk prices" && (c.candles || []).length ? `${cur} · ${named}`
-      : (c.candles || []).length ? `${cur} · ${named || "desk prices"}`
+      : named && named !== "desk prices" && ((c.candles || []).length || liveN) ? `${cur} · ${named}`
+      : ((c.candles || []).length || liveN) ? `${cur} · ${named || (liveN ? "DexScreener" : "desk prices")}`
       : (g ? g.loading : !!(c.pool || c.address)) ? (wait ? `GeckoTerminal busy · retry in ${wait}s` : `Loading ${cur}…`)
       : "";
     return `<span class="tfs">${Object.keys(TFS).map(k => `<button type="button" data-tf="${k}" class="${k === cur ? "on" : ""}" aria-pressed="${k === cur}">${k}</button>`).join("")}</span><span class="srcl">${esc(src)}</span>`;
+  }
+  function hintCoin(mint) {
+    if (!mint) return null;
+    const newc = ((S.state && S.state.new_coins) || []).find(c => c && c.mint === mint);
+    const bk = bookSnap() || {};
+    const hold = (((bk.wallet && bk.wallet.holdings) || []).find(h => h && h.mint === mint))
+      || (((S.state && S.state.wallet && S.state.wallet.holdings) || []).find(h => h && h.mint === mint));
+    const bot = ((S.bot && (S.bot.book || S.bot.positions)) || []).find(p => p && p.mint === mint);
+    const sc = card("scanner");
+    const feed = ((sc && sc.feed) || []).find(f => f && f.mint === mint);
+    const open = ((S.state && S.state.open_positions) || []).find(p => p && p.mint === mint);
+    const miss = ((S.state && S.state.misses) || []).find(m => m && m.mint === mint);
+    if (newc || hold || bot || feed || open || miss) return { newc, hold, bot, feed, open, miss };
+    return null;
+  }
+  function stubCoin(mint) {
+    const hint = hintCoin(mint);
+    const ds = DS_INFO[mint] && !DS_INFO[mint].failed ? DS_INFO[mint] : null;
+    if (!hint && !ds) return null;
+    const newc = hint && hint.newc, hold = hint && hint.hold, bot = hint && hint.bot;
+    const feed = hint && hint.feed, open = hint && hint.open, miss = hint && hint.miss;
+    const launched = (newc && (newc.migrated_at || newc.launched_at)) || (feed && feed.migrated_at) || null;
+    let ageH = (bot && bot.age_h) || (newc && newc.age_h) || null;
+    if (ageH == null && launched) {
+      const t = Date.parse(launched);
+      if (isFinite(t)) ageH = Math.max(0, (Date.now() - t) / 3600000);
+    }
+    const price = (ds && ds.price) || (newc && newc.price) || (bot && bot.price) || (open && open.price) || null;
+    const mcap = (ds && ds.mcap) || (newc && (newc.marketCap != null ? newc.marketCap : newc.mcap)) || (bot && bot.mcap) || null;
+    const liq = (ds && ds.liq) || (newc && newc.liquidityUsd) || (feed && feed.liquidityUsd) || null;
+    return {
+      _stub: true, mint, address: mint, chain: "solana",
+      name: (newc && newc.name) || (hold && (hold.name || hold.symbol)) || (bot && bot.name)
+        || (feed && feed.name) || (open && open.name) || (miss && miss.name) || null,
+      symbol: (newc && newc.symbol) || (hold && hold.symbol) || (bot && bot.symbol) || (feed && feed.symbol) || "",
+      logo: (newc && newc.logo) || (hold && hold.logo) || (bot && bot.logo) || (feed && feed.logo) || (ds && ds.logo) || null,
+      price, price_ts: ds && ds.at ? new Date(ds.at).toISOString() : null,
+      pool: (ds && ds.pair) || (newc && newc.pool) || (bot && bot.pool) || null,
+      candles: (bot && bot.candles) || [],
+      candle_source: (bot && bot.candle_source) || (ds && ds.price ? "DexScreener" : null),
+      launched_at: launched, age_h: ageH,
+      stats: {
+        marketCap: mcap, liquidityUsd: liq,
+        volume24h: newc && newc.volume24h, volume1h: newc && newc.volume1h,
+        holders: newc && newc.holders, change24h: newc && (newc.change24h != null ? newc.change24h : newc.p24),
+        change1h: newc && (newc.change1h != null ? newc.change1h : newc.p1),
+        buys1h: newc && newc.buys1h, sells1h: newc && newc.sells1h
+      }
+    };
   }
   function coinScreen(mint) {
     const loading = backbar("Back", "#/home") + `<div class="gut">${sk(34, "60%")}${sk(18, "40%", "margin-top:8px")}${sk(56, "50%", "margin-top:14px")}</div>
       <div class="gut" style="margin-top:14px">${sk(260)}</div><div class="gut" style="margin-top:16px">${sk(130, null, "border-radius:14px")}</div>`;
     if (!S.state) return loading;
-    if (S.missing[`coin/${mint}.json`]) return { html: backbar("Back", "#/home") + `<div class="empty" style="padding-top:120px">Not on the desk tonight</div>`, after() {} };
-    const c = S.coin[mint];
-    if (!c) return loading;
+    const real = S.coin[mint] && !S.coin[mint]._stub ? S.coin[mint] : S.coin[mint];
+    const c = (real && !real._stub) ? real : (real || stubCoin(mint));
+    if (!c) {
+      dsWanted(mint, () => render());
+      if (!S.missing[`coin/${mint}.json`]) return loading;
+      if (!DS_INFO[mint]) return loading;
+      return { html: backbar("Back", "#/home") + `<div class="empty" style="padding-top:120px">Not on the desk tonight</div>`, after() {} };
+    }
+    if (!c.stats) c.stats = {};
     const p = c.position, x = c.exit;
     const chipOk = chipCleared(c.audit_chip);
     const open = !!(p && p.open);
@@ -2769,7 +2827,7 @@
   if ("serviceWorker" in navigator && !LOCAL) {
     let swReload = false;
     navigator.serviceWorker.addEventListener("controllerchange", () => { if (swReload) return; swReload = true; location.reload(); });
-    navigator.serviceWorker.register("sw.js?v=48", { updateViaCache: "none" }).then(reg => { try { reg.update(); } catch (e) {} }).catch(() => {});
+    navigator.serviceWorker.register("sw.js?v=49", { updateViaCache: "none" }).then(reg => { try { reg.update(); } catch (e) {} }).catch(() => {});
   }
   render();
   if (BASE) poll();
