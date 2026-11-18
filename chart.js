@@ -327,8 +327,20 @@
     const showVol = opts.volume !== false;
     const AX = 64, plotW = Math.max(1, w - AX), top = 20, priceBot = Math.round(h * (showVol ? 0.70 : 0.86)), volTop = Math.round(h * 0.75), volBot = h - 22;
     if (opts.fit && all.length) {
-      st.slot = fitSlot(plotW, all.length);
-      st.off = 0;
+      let i0 = 0, i1 = all.length - 1;
+      const foc = opts.focus;
+      if (foc && foc.length === 2 && foc[0] != null && foc[1] != null) {
+        const a = Number(foc[0]), b = Number(foc[1]);
+        if (isFinite(a) && isFinite(b) && b > a) {
+          const s = all.findIndex(c => c.t >= a);
+          if (s >= 0) i0 = s;
+          for (let i = all.length - 1; i >= 0; i--) if (all[i].t <= b) { i1 = i; break; }
+          if (i1 < i0) { i0 = 0; i1 = all.length - 1; }
+        }
+      }
+      const nFocus = Math.max(1, i1 - i0 + 1);
+      st.slot = fitSlot(plotW, nFocus);
+      st.off = Math.max(0, all.length - 1 - i1);
     }
     const slot = st.slot;
     const fit = Math.max(1, Math.floor(plotW / slot));
@@ -370,10 +382,19 @@
     cs.forEach((c, i) => {
       const x = X(i);
       const up = c.c >= c.o, col = c.gap ? C.ter : (up ? C.up : C.down), xs = Math.round(x) + 0.5;
+      if (c.gap) {
+        // Flat fills should read as a continuous step, not a 2px speck that looks like a hole.
+        const y = Math.round(Y(c.c));
+        ctx.fillStyle = col;
+        ctx.globalAlpha = 0.7;
+        ctx.fillRect(Math.round(x - slot / 2), y - 1, Math.max(2, slot + 0.5), 2);
+        ctx.globalAlpha = 1;
+        return;
+      }
       ctx.strokeStyle = col; ctx.lineWidth = 1;
       ctx.beginPath(); ctx.moveTo(xs, Y(c.h)); ctx.lineTo(xs, Y(c.l)); ctx.stroke();
       const y1 = Y(Math.max(c.o, c.c)), y2 = Y(Math.min(c.o, c.c));
-      ctx.fillStyle = col; ctx.fillRect(Math.round(x - bw / 2), y1, bw, Math.max(c.gap ? 2 : 1, y2 - y1));
+      ctx.fillStyle = col; ctx.fillRect(Math.round(x - bw / 2), y1, bw, Math.max(1, y2 - y1));
     });
     const step = opts.step || 60, every = Math.max(1, Math.ceil(64 / slot)), lblStep = step * every;
     const nice = [60, 120, 300, 600, 900, 1800, 3600, 7200, 14400].find(x => x >= lblStep) || lblStep;

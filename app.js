@@ -7,7 +7,7 @@
   const QS = new URLSearchParams(location.search);
   const FIXTURE = LOCAL ? QS.get("fixture") : null;          // local screenshots only
   const POLL_VISIBLE_S = 2, POLL_HIDDEN_S = 15, POLL_S = POLL_VISIBLE_S, MAX_BACKOFF = 60;
-  const APP_VERSION = "v46";   // bump with every app release (also index.html ?v= and sw.js CACHE)
+  const APP_VERSION = "v47";   // bump with every app release (also index.html ?v= and sw.js CACHE)
   const AGENTS = ["scanner", "auditor", "analyst", "executor", "risk"];
   const TITLE = { scanner: "Scanner", auditor: "Auditor", analyst: "Analyst", executor: "Executor", risk: "Risk" };
   const COLOR = { scanner: "cyan", auditor: "", analyst: "yellow", executor: "green", risk: "pink" };
@@ -918,11 +918,16 @@
     if (!mint) return null;
     const c = S.coin[mint];
     if (c && c.logo) return c.logo;
+    if (DS_INFO[mint] && DS_INFO[mint].logo) return DS_INFO[mint].logo;
+    if (S.bot) {
+      for (const p of (S.bot.book || S.bot.positions || [])) if (p.mint === mint && p.logo) return p.logo;
+      for (const tr of S.bot.trades || []) if (tr.mint === mint && tr.logo) return tr.logo;
+    }
     for (const page of S.activity || []) {
       for (const r of page.rows || []) if (r.mint === mint && r.logo) return r.logo;
     }
     for (const n of (S.state && S.state.new_coins) || []) if (n.mint === mint && n.logo) return n.logo;
-    return null;
+    return dsCdn(mint);
   }
   function markName(m) {
     const c = m.mint && S.coin[m.mint];
@@ -1419,7 +1424,7 @@
   const GT_POOL = {};   // mint -> resolved GT pool address
   // timeframe -> [GeckoTerminal endpoint, aggregate, seconds per candle]
   const TFS = { "1m": ["minute", 1, 60], "5m": ["minute", 5, 300], "15m": ["minute", 15, 900], "1h": ["hour", 1, 3600] };
-  const tfFor = (mint, ageH) => S.tf[mint] || (ageH != null && ageH > 3 ? "5m" : "1m");
+  const tfFor = (mint, ageH) => S.tf[mint] || (ageH != null && ageH > 36 ? "1h" : ageH != null && ageH > 12 ? "15m" : ageH != null && ageH > 3 ? "5m" : "1m");
   const ohlcKey = (mint, ageH) => mint + "|" + tfFor(mint, ageH);
   function gtNet(c) {
     const ch = String((c && c.chain) || "solana").toLowerCase();
@@ -1436,17 +1441,58 @@
     return l.map(x => ({ t: +x[0], o: +x[1], h: +x[2], l: +x[3], c: +x[4], vol: +x[5] }))
       .filter(c => [c.t, c.o, c.h, c.l, c.c].every(isFinite)).sort((a, b) => a.t - b.t);
   }
-  function gtPickPool(j) {
+  function gtPickPool(j, minLiq) {
     const arr = (j && j.data) || [];
     let best = null, bestLiq = -1;
+    const floor = minLiq == null ? 0 : minLiq;
     arr.forEach(p => {
       const a = (p && p.attributes) || {};
       const id = (p && p.id) || "";
       const addr = a.address || (id.indexOf("_") >= 0 ? id.slice(id.indexOf("_") + 1) : id);
       const liq = +a.reserve_in_usd || 0;
-      if (addr && liq >= bestLiq) { best = addr; bestLiq = liq; }
+      if (addr && liq >= floor && liq >= bestLiq) { best = addr; bestLiq = liq; }
     });
-    return best;
+    return best ? { addr: best, liq: bestLiq } : null;
+  }
+  const DS_INFO = {};
+  function dsCdn(mint) {
+    return mint ? ("https://dd.dexscreener.com/ds-data/tokens/solana/" + encodeURIComponent(mint) + ".png") : null;
+  }
+  function dsFetch(mint) {
+    if (!mint) return Promise.resolve(null);
+    const hit = DS_INFO[mint];
+    if (hit && !hit.failed && Date.now() - hit.at < 30000) return Promise.resolve(hit);
+    const url = "https://api.dexscreener.com/latest/dex/tokens/" + encodeURIComponent(mint);
+    return fetch(url, { headers: { Accept: "application/json" }, referrerPolicy: "no-referrer", cache: "no-store" })
+      .then(r => r.status === 200 ? r.json() : null)
+      .then(j => {
+        const pairs = ((j && j.pairs) || []).filter(p => p && p.pairAddress);
+        pairs.sort((a, b) => (+((b.liquidity || {}).usd) || 0) - (+((a.liquidity || {}).usd) || 0));
+        const top = pairs[0];
+        const liq = top ? +((top.liquidity || {}).usd) || 0 : 0;
+        const mcap = top && top.marketCap != null ? +top.marketCap : (top && top.fdv != null ? +top.fdv : null);
+        const price = top && top.priceUsd != null ? +top.priceUsd : null;
+        const logo = (top && ((top.info && top.info.imageUrl) || (top.baseToken && top.baseToken.logoURI))) || dsCdn(mint);
+        const info = { at: Date.now(), pair: top && top.pairAddress, liq, mcap: isFinite(mcap) ? mcap : null, price: isFinite(price) ? price : null, logo, failed: !top };
+        DS_INFO[mint] = info;
+        return info;
+      })
+      .catch(() => { const info = { at: Date.now(), failed: true }; if (!DS_INFO[mint]) DS_INFO[mint] = info; return DS_INFO[mint]; });
+  }
+  function dsWanted(mint, cb) {
+    if (!mint) return;
+    const hit = DS_INFO[mint];
+    if (hit && Date.now() - hit.at < 30000) return;
+    dsFetch(mint).then(info => { if (cb && info && !info.failed) cb(info); });
+  }
+  function routeMint() {
+    const r = route();
+    if (r.name === "coin" && r.arg) return decodeURIComponent(r.arg);
+    if (r.name === "bot" && r.arg && S.bot) {
+      const bp = (S.bot.book || S.bot.positions || []).find(x => String(x.id) === String(decodeURIComponent(r.arg)));
+      return (bp && bp.mint) || null;
+    }
+    return null;
   }
   function gtEnqueue(c) {
     const key = ohlcKey(c.mint, c.age_h);
@@ -1469,7 +1515,7 @@
     const net = gtNet(c);
     OHLC[key] = Object.assign(o || { cs: [] }, { loading: true });
     const token = c.address || mint;
-    const needLookup = !pool || GT_POOL[mint + ":miss:" + (c.pool || "")];
+    const hinted = pool && !GT_POOL[mint + ":miss:" + (c.pool || "")] ? pool : null;
     const lookupUrl = `https://api.geckoterminal.com/api/v2/networks/${net}/tokens/${encodeURIComponent(token)}/pools?page=1`;
     const ohlcvUrl = p => `https://api.geckoterminal.com/api/v2/networks/${net}/pools/${encodeURIComponent(p)}/ohlcv/${ep}?aggregate=${agg}&limit=150&currency=usd`;
     const failSoft = e => {
@@ -1481,42 +1527,51 @@
     };
     const loadOhlcv = p => gtFetch(ohlcvUrl(p)).then(j => {
       const cs = gtParseOhlcv(j, step);
+      // A handful of dust-pool prints is worse than the desk series — keep looking.
+      if (!cs.length || cs.length < 5) { const e = new Error("HTTP 404"); e.status = 404; throw e; }
       GT_POOL[mint] = p;
       OHLC[key] = { at: Date.now(), cs, label: tf, step, loading: false, pool: p };
     });
-    const start = needLookup
-      ? gtFetch(lookupUrl).then(j => {
-          const p = gtPickPool(j);
-          if (!p) { const e = new Error("HTTP 404"); e.status = 404; throw e; }
-          GT_POOL[mint] = p;
-          return loadOhlcv(p);
-        })
-      : loadOhlcv(pool).catch(e => {
-          if (e && e.status === 404 && canLookup && !GT_POOL[mint]) {
-            GT_POOL[mint + ":miss:" + pool] = true;
-            return gtFetch(lookupUrl).then(j => {
-              const p = gtPickPool(j);
-              if (!p) throw e;
-              GT_POOL[mint] = p;
-              return loadOhlcv(p);
-            });
+    const tryCands = cands => {
+      const uniq = [];
+      cands.forEach(p => { if (p && uniq.indexOf(p) < 0) uniq.push(p); });
+      const next = i => {
+        if (i >= uniq.length) { const e = new Error("HTTP 404"); e.status = 404; throw e; }
+        return loadOhlcv(uniq[i]).catch(e => (e && e.status === 404) ? next(i + 1) : Promise.reject(e));
+      };
+      return next(0);
+    };
+    const resolvePools = () => Promise.all([
+      gtFetch(lookupUrl).catch(() => null),
+      dsFetch(token)
+    ]).then(([gtj, ds]) => {
+      const gtBest = gtPickPool(gtj, 50) || gtPickPool(gtj, 0);
+      const dsPair = ds && ds.pair, dsLiq = (ds && ds.liq) || 0, gtLiq = (gtBest && gtBest.liq) || 0;
+      const order = [];
+      if (hinted) order.push(hinted);
+      if (dsPair && dsLiq >= gtLiq) { order.push(dsPair); if (gtBest) order.push(gtBest.addr); }
+      else { if (gtBest) order.push(gtBest.addr); if (dsPair) order.push(dsPair); }
+      return tryCands(order);
+    });
+    const start = hinted
+      ? loadOhlcv(hinted).catch(e => {
+          if (e && e.status === 404 && canLookup) {
+            GT_POOL[mint + ":miss:" + hinted] = true;
+            return resolvePools();
           }
           throw e;
-        });
+        })
+      : resolvePools();
     start.catch(failSoft).finally(() => { gtBusy = false; setTimeout(gtNext, Math.max(0, gtPauseUntil - Date.now()) + 50);
-      const r = route();
-      const onCoin = r.name === "coin" && decodeURIComponent(r.arg || "") === mint;
-      let onBot = false;
-      if (r.name === "bot" && r.arg && S.bot) {
-        const bp = (S.bot.book || S.bot.positions || []).find(x => String(x.id) === String(decodeURIComponent(r.arg)));
-        onBot = !!(bp && bp.mint === mint);
-      }
-      if (onCoin || onBot) render(); });
+      if (routeMint() === mint) render(); });
   }
   function gtNext() {
     if (gtBusy || Date.now() < gtPauseUntil || !gtQueue.length) return;
-    const r = route(), cur = r.name === "coin" ? decodeURIComponent(r.arg || "") : null;
-    gtQueue = gtQueue.filter(q => q[1] && q[1].mint === cur);
+    const cur = routeMint();
+    if (cur) {
+      const idx = gtQueue.findIndex(q => q[1] && q[1].mint === cur);
+      if (idx > 0) gtQueue.unshift(gtQueue.splice(idx, 1)[0]);
+    }
     const q = gtQueue.shift(); if (!q) return;
     if (OHLC[q[0]]) { OHLC[q[0]].loading = false; OHLC[q[0]].at = 0; }
     gtWanted(q[1]);
@@ -1586,7 +1641,13 @@
   function mcFactor(coin, px, extra) {
     extra = extra || {};
     const stats = (coin && coin.stats) || {};
-    const price = (px != null && +px > 0) ? +px : (coin && coin.price);
+    // Only pair a market cap with the price from the same source — never mix a live print with a stale cap.
+    if (extra.mcap != null && extra.mcapPrice != null && +extra.mcapPrice > 0 && isFinite(+extra.mcap / +extra.mcapPrice))
+      return +extra.mcap / +extra.mcapPrice;
+    const cprice = coin && coin.price;
+    if (stats.marketCap != null && cprice != null && +cprice > 0 && isFinite(+stats.marketCap / +cprice))
+      return +stats.marketCap / +cprice;
+    const price = (px != null && +px > 0) ? +px : cprice;
     const mcap = stats.marketCap != null ? +stats.marketCap : (extra.mcap != null ? +extra.mcap : null);
     if (mcap != null && price != null && price > 0 && isFinite(mcap / price)) return mcap / price;
     const supply = stats.supply != null ? +stats.supply : (coin && coin.supply != null ? +coin.supply : null);
@@ -2256,14 +2317,56 @@
       const s = p.cost_sol != null ? sol(p.cost_sol) : (p.size_sol != null ? sol(p.size_sol) : "—");
       return usd + " · " + s;
     };
-    const pos = (b.positions || []).filter(p => p && p.status !== "closed" && !p.closed_at).map(p => `<a class="row" href="#/bot/${esc(p.id)}"><span class="main"><div class="t">${esc(p.name || (p.mint || "").slice(0, 6))} <span class="ter">#${esc(p.id)}</span>${p.half_sold ? ' <span class="pill greenp">Half sold</span>' : ""}</div>
-        <div class="s">${esc(putIn(p))} in · now ${esc(sol(p.value_sol))}${p.half_sold && p.half_pnl_sol != null ? " · half " + esc(solS(p.half_pnl_sol)) : ""}${p.status !== "open" ? " · " + esc(p.status) : ""}${p.tp_pct != null ? " · TP +" + esc(p.tp_pct) + "%" : ""}</div></span>
-        <span class="v"><div class="${cls(p.pnl_pct)}">${esc(pctS(p.pnl_pct))}</div><div class="s ${cls(p.pnl_usd != null ? p.pnl_usd : p.pnl_sol)}">${p.pnl_usd != null ? esc(moneyS(p.pnl_usd)) : esc(solS(p.pnl_sol))}</div></span></a>`).join("");
+    const bookById = new Map((b.book || []).map(p => [String(p.id), p]));
+    const txIcon = u => {
+      const s = safeUrl(u);
+      return s ? `<span class="txic" data-tx="${esc(s)}" role="link" tabindex="0" aria-label="View transaction on Solscan"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M14 5h5v5M19 5l-7 7"/><path d="M19 13v5a1 1 0 0 1-1 1H7a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1h5"/></svg></span>` : "";
+    };
+    const vilniusShort = iso => {
+      if (!iso) return "";
+      const d = new Date(typeof iso === "number" && iso < 1e12 ? iso * 1000 : iso);
+      if (!isFinite(d.getTime())) return "";
+      const opt = { timeZone: "Europe/Vilnius", hour: "2-digit", minute: "2-digit", hour12: false };
+      try {
+        const same = d.toLocaleDateString("en-GB", { timeZone: "Europe/Vilnius" }) === new Date().toLocaleDateString("en-GB", { timeZone: "Europe/Vilnius" });
+        return same ? d.toLocaleTimeString("en-GB", opt) : vilnius(d.toISOString());
+      } catch (e) { return vilnius(d.toISOString()); }
+    };
+    const tradeAmt = t => t.usd != null ? money(t.usd) : (t.sol != null ? sol(t.sol) : "—");
+    const pos = (b.positions || []).filter(p => p && p.status !== "closed" && !p.closed_at).map(p => {
+      const nm = p.name || (p.mint || "").slice(0, 6);
+      const sub = [p.strategy || p.status, p.half_sold ? "half sold" : null, p.tp_pct != null ? "TP +" + p.tp_pct + "%" : null].filter(Boolean).join(" · ");
+      const pnlV = p.pnl_usd != null ? p.pnl_usd : p.pnl_sol;
+      return `<a class="row posrow" href="#/bot/${esc(p.id)}">${logo(nm, p.logo || logoFor(p.mint), 40)}
+        <span class="main"><div class="t">${esc(nm)} <span class="ter">#${esc(p.id)}</span></div>
+        <div class="s">${esc(sub)}</div></span>
+        <span class="v"><div class="amt ${cls(pnlV)}">${p.pnl_usd != null ? esc(moneyS(p.pnl_usd)) : esc(solS(p.pnl_sol))}</div>
+        <div class="pnl ${cls(p.pnl_pct)}">${esc(sgn(p.pnl_pct))}</div></span></a>`;
+    }).join("");
     const trades = (b.trades || []).map(t => {
-      const body = `<span class="main"><div class="t">${esc(t.side === "buy" ? "Bought" : t.side === "sell" ? "Sold" : (t.side || "Trade"))} ${esc(t.name || (t.mint || "").slice(0, 6))}</div>
-        <div class="s wrap">${esc(vilnius(typeof t.ts === "number" ? new Date(t.ts * 1000).toISOString() : t.ts))} · ${esc(t.mode || "")} · ${esc(t.reason || "")}${t.error ? " · " + esc(t.error) : ""}</div></span>
-        <span class="v"><div>${t.usd != null ? esc(money(t.usd)) : esc(sol(t.sol))}</div><div class="s ${t.status === "failed" ? "red" : ""}">${esc(t.status || "")}${t.link && safeUrl(t.link) ? ` · ${ext(t.link, "tx")}` : ""}</div></span>`;
-      return t.position_id ? `<a class="row" href="#/bot/${esc(t.position_id)}">${body}</a>` : `<div class="row">${body}</div>`;
+      const pos = t.position_id != null ? bookById.get(String(t.position_id)) : null;
+      const nm = t.name || (pos && pos.name) || (t.mint || "").slice(0, 6);
+      const buy = t.side === "buy", sell = t.side === "sell", fail = t.status === "failed" || t.status === "skipped";
+      const pill = fail ? '<span class="sidepill fail">Failed</span>' : buy ? '<span class="sidepill buy">Bought</span>' : sell ? '<span class="sidepill sell">Sold</span>' : "";
+      const shortWhy = r => {
+        const s = (r || "").trim();
+        if (!s || /^score\b/i.test(s) || /^ok\b/i.test(s)) return "";
+        const cut = s.split(" · ")[0].trim();
+        return cut.length > 22 ? cut.slice(0, 20) + "…" : cut;
+      };
+      const why = shortWhy(sell ? (t.reason || (pos && pos.exit_reason)) : ((pos && pos.strategy) || t.reason));
+      const when = vilniusShort(t.ts);
+      const sub = [when, why, fail && t.error].filter(Boolean).join(" · ");
+      const pnlUsd = sell && !fail && pos ? (pos.half_sold && pos.status !== "closed" && pos.half_pnl_usd != null ? pos.half_pnl_usd : pos.pnl_usd) : null;
+      const pnlPct = sell && !fail && pos ? pos.pnl_pct : null;
+      const pnlV = pnlUsd != null ? pnlUsd : null;
+      const body = `${logo(nm, t.logo || (pos && pos.logo) || logoFor(t.mint), 40)}
+        <span class="main"><div class="t">${esc(nm)}${pill}</div>
+        <div class="s">${esc(sub)}</div></span>
+        <span class="v"><div class="amt">${esc(tradeAmt(t))}</div>
+        ${sell && !fail && (pnlV != null || pnlPct != null) ? `<div class="pnl ${cls(pnlV != null ? pnlV : pnlPct)}">${pnlV != null ? esc(moneyS(pnlV)) : ""}${pnlV != null && pnlPct != null ? " · " : ""}${pnlPct != null ? esc(sgn(pnlPct)) : ""}</div>` : (fail ? '<div class="pnl red">failed</div>' : "")}</span>
+        ${txIcon(t.link)}`;
+      return t.position_id ? `<a class="row traderow" href="#/bot/${esc(t.position_id)}">${body}</a>` : `<div class="row traderow">${body}</div>`;
     }).join("");
     const todayLine = today == null
       ? `<span class="sec">Wallet — today</span>`
@@ -2306,6 +2409,11 @@
       }
       view.querySelectorAll("[data-botrange]").forEach(b => b.onclick = () => { S.botRange = b.dataset.botrange; botChartPrev = null; render(); });
       view.querySelectorAll("[data-botunit]").forEach(b => b.onclick = () => { S.botUnit = b.dataset.botunit; botChartPrev = null; render(); });
+      view.querySelectorAll("[data-tx]").forEach(el => {
+        const open = ev => { ev.preventDefault(); ev.stopPropagation(); const u = safeUrl(el.getAttribute("data-tx")); if (u) window.open(u, "_blank", "noopener"); };
+        el.addEventListener("click", open);
+        el.addEventListener("keydown", ev => { if (ev.key === "Enter" || ev.key === " ") open(ev); });
+      });
     } };
   }
 
@@ -2322,6 +2430,7 @@
     const open = p.status !== "closed";
     const pnlCls = cls(p.pnl_usd != null ? p.pnl_usd : (p.pnl_pct != null ? p.pnl_pct : p.pnl_sol));
     const coin = S.coin[p.mint] || {};
+    const ds = DS_INFO[p.mint] && !DS_INFO[p.mint].failed ? DS_INFO[p.mint] : null;
     const key = "bot:" + p.id;
     const draft = S.lineDraft[key] || {};
     const snap = p.lines || (open ? { sl_risk_price: p.stop_price, sl_risk_kind: p.trail_active ? "trail" : "stop",
@@ -2329,8 +2438,20 @@
       tp_price: p.tp_pct != null && p.entry_price ? p.entry_price * (1 + p.tp_pct / 100) : null,
       tp_pct: p.tp_pct, sl_price: p.sl_pct != null && p.entry_price ? p.entry_price * (1 - p.sl_pct / 100) : null,
       sl_pct: p.sl_pct } : null);
-    const liveP = p.price || coin.price;
-    const fac = mcFactor(coin, liveP, { mcap: coin.stats && coin.stats.marketCap, entryMcap: p.entry_mcap, entryPrice: p.entry_price });
+    const gtLast = (() => {
+      let best = null;
+      Object.keys(TFS).forEach(tf => {
+        const g = OHLC[p.mint + "|" + tf];
+        const last = g && g.cs && g.cs.length ? g.cs[g.cs.length - 1] : null;
+        if (last && (!best || last.t > best.t)) best = last;
+      });
+      return best;
+    })();
+    const liveP = (gtLast && gtLast.c) || (ds && ds.price) || coin.price || p.price;
+    const fac = mcFactor(coin, liveP, {
+      mcap: ds && ds.mcap, mcapPrice: ds && ds.price,
+      entryMcap: p.entry_mcap, entryPrice: p.entry_price
+    });
     const mcPref = (() => { try { const v = localStorage.getItem("desk.mcmode"); return v === "1" ? true : v === "0" ? false : null; } catch (e) { return null; } })();
     const mcOn = !!(fac && (mcPref === null ? true : mcPref));
     const tpDraft = S.tpDraft[key] != null ? S.tpDraft[key] : (p.tp_pct != null ? String(p.tp_pct) : "");
@@ -2353,20 +2474,23 @@
       : `${esc(p.mode || "")} · ${esc(p.status || "")}${reason ? " · " + esc(reason) : ""}`;
     const holdH = (!open && p.opened_at && p.closed_at)
       ? Math.max(0, (new Date(p.closed_at) - new Date(p.opened_at)) / 3600000) : coin.age_h;
+    const fromOpen = p.opened_at ? (Date.now() - Date.parse(p.opened_at)) / 3600000 : 0;
+    const fromLaunch = coin.launched_at ? (Date.now() - Date.parse(coin.launched_at)) / 3600000 : 0;
+    const ageH = Math.max(coin.age_h || 0, fromOpen, fromLaunch, holdH || 0);
     const html = backbar("Bot", "#/bot") + `<div class="coinhead">
-        <div class="cname">${logo(p.name || p.mint, coin.logo, 48)}<span class="cnm"><span>${esc(p.name || (p.mint || "").slice(0, 4) + "…" + (p.mint || "").slice(-3))}</span>
+        <div class="cname">${logo(p.name || p.mint, p.logo || coin.logo || logoFor(p.mint), 48)}<span class="cnm"><span>${esc(p.name || (p.mint || "").slice(0, 4) + "…" + (p.mint || "").slice(-3))}</span>
           <span class="sec sm">${sub}</span></span>
           ${p.pnl_pct != null ? `<span class="cpill lg2 ${p.pnl_pct >= 0 ? "up" : "down"}">${esc(sgn(p.pnl_pct, 2))}</span>` : ""}
           ${open ? closedPill : ""}</div>
           ${!open ? `<div class="closedrow">${closedPill}</div>` : ""}
       </div>
-      <div class="chartcard glass" id="botposchart"><div class="chsrc">${chartSrc(p.mint, Object.assign({}, coin, { age_h: (coin.age_h != null ? coin.age_h : holdH), candles: coin.candles || p.candles }))}</div>
+      <div class="chartcard glass" id="botposchart"><div class="chsrc">${chartSrc(p.mint, Object.assign({}, coin, { age_h: ageH, candles: coin.candles || p.candles }))}</div>
         <div class="zoomrow"><span class="zoomctl" role="group" aria-label="Chart zoom"><button type="button" id="zout" aria-label="Zoom out">−</button><button type="button" id="zfit" aria-label="Show all candles">All</button><button type="button" id="zin" aria-label="Zoom in">+</button></span><span class="zoomhint">${open ? "pinch or drag · drag SL/TP handles" : "pinch or drag"}</span></div>
         <div class="chartwrap" style="position:relative"><canvas id="botcandles"></canvas></div></div>
       <div class="tiles"><button type="button" class="tile tog${mcOn ? " on" : ""}" id="mctog" aria-pressed="${mcOn}" ${fac ? "" : "disabled "}>
         <svg viewBox="0 0 24 24"><path d="M4 19V9m5 10V5m5 14v-7m5 7V3"/></svg>
         <div class="k">Market cap <span class="tgl">${fac ? (mcOn ? "showing MC · tap for price" : "tap to show MC") : "n/a · showing price"}</span></div>
-        <div class="vv">${fac && liveP ? kfmt((open ? liveP : (p.exit_price || liveP)) * fac) : (coin.stats && coin.stats.marketCap != null ? kfmt(coin.stats.marketCap) : "n/a")}</div></button></div>
+        <div class="vv">${fac && liveP ? kfmt(liveP * fac) : (ds && ds.mcap != null ? kfmt(ds.mcap) : (coin.stats && coin.stats.marketCap != null ? kfmt(coin.stats.marketCap) : "n/a"))}</div></button></div>
       <div class="statgrid">
         <div class="cell"><div class="k">Invested</div><div class="v">${p.cost_usd != null ? esc(money(p.cost_usd)) : "—"}<span class="ter"> · ${esc(sol(p.cost_sol))}</span></div></div>
         <div class="cell"><div class="k">${open ? "Value" : "Got back"}</div><div class="v">${p.value_usd != null ? esc(money(p.value_usd)) : "—"}<span class="ter"> · ${esc(sol(p.value_sol))}</span></div></div>
@@ -2413,10 +2537,10 @@
       if (mct && fac) mct.onclick = e => { e.preventDefault(); applyMcMode(!mcOn); };
       const cv = document.getElementById("botcandles");
       if (cv && window.DeskChart) {
-        const ageH = coin.age_h != null ? coin.age_h : (coin.launched_at ? (Date.now() - Date.parse(coin.launched_at)) / 3600000 : holdH);
         const coint = Object.assign({ mint: p.mint, address: p.mint, chain: coin.chain || "solana" }, coin, {
-          age_h: ageH, candles: (coin.candles && coin.candles.length) ? coin.candles : (p.candles || [])
+          age_h: ageH, pool: coin.pool, candles: (coin.candles && coin.candles.length) ? coin.candles : (p.candles || [])
         });
+        dsWanted(p.mint, () => render());
         gtWanted(coint);
         const tf = tfFor(p.mint, coint.age_h), step = TFS[tf][2], g = OHLC[p.mint + "|" + tf], gt = g && g.cs && g.cs.length ? g.cs : null;
         const desk = deskCandles(coint.candles || [], step);
@@ -2447,6 +2571,18 @@
           emptyText: mcOn && k == null ? "Market cap n/a" : (base.length ? undefined : "no price data yet"),
           volume: volOn(), mcFmt: kfmt,
           fit: !open && !userZ,
+          focus: (function () {
+            const openT = p.opened_at ? Date.parse(p.opened_at) / 1000 : null;
+            const closeT = p.closed_at ? Date.parse(p.closed_at) / 1000 : null;
+            if (!openT) return null;
+            const from = openT - 30 * 60;
+            const hasGt = !!(gt && gt.length >= 5);
+            const lastDesk = desk.length ? desk[desk.length - 1].t : null;
+            let to = Date.now() / 1000;
+            if (!hasGt && closeT) to = Math.max(closeT + 2 * 3600, lastDesk || closeT);
+            if (to - from < 15 * 60) to = from + 15 * 60;
+            return [from, to];
+          })(),
           tip: (candle, info) => {
             const when = info && info.time ? info.time : "";
             const pr = candle.px != null ? candle.px : candle.c;
@@ -2562,7 +2698,7 @@
   if ("serviceWorker" in navigator && !LOCAL) {
     let swReload = false;
     navigator.serviceWorker.addEventListener("controllerchange", () => { if (swReload) return; swReload = true; location.reload(); });
-    navigator.serviceWorker.register("sw.js?v=46", { updateViaCache: "none" }).then(reg => { try { reg.update(); } catch (e) {} }).catch(() => {});
+    navigator.serviceWorker.register("sw.js?v=47", { updateViaCache: "none" }).then(reg => { try { reg.update(); } catch (e) {} }).catch(() => {});
   }
   render();
   if (BASE) poll();

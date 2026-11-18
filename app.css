@@ -1230,3 +1230,18 @@ canvas.linedrag{cursor:ns-resize}
 .learncard .chipv{display:inline-block;background:var(--card2);border-radius:10px;padding:4px 8px;font-size:12px;max-width:100%;overflow-wrap:anywhere}
 .learncard .list{margin:0;box-shadow:none}
 .learncard .botbtns .mbtn.ghost{background:var(--card2);color:var(--text)}
+
+/* v47 bot trades / open positions */
+.sidepill{display:inline-flex;align-items:center;height:18px;padding:0 7px;border-radius:9px;font-size:11px;font-weight:700;letter-spacing:.02em;vertical-align:middle;margin-left:8px;position:relative;top:-1px}
+.sidepill.buy{background:rgba(0,227,140,.16);color:var(--green)}
+.sidepill.sell,.sidepill.fail{background:rgba(255,92,122,.16);color:var(--red)}
+.traderow,.posrow{gap:12px;text-decoration:none;color:inherit;cursor:pointer}
+.traderow .t,.posrow .t{display:flex;align-items:center;min-width:0;font-weight:650}
+.traderow .v,.posrow .v{font-variant-numeric:tabular-nums}
+.traderow .v .amt,.posrow .v .amt{font-size:15px;font-weight:650}
+.traderow .v .pnl,.posrow .v .pnl{font-size:12px;margin-top:2px;font-weight:650}
+.txic{flex:0 0 28px;width:28px;height:28px;border-radius:14px;display:inline-flex;align-items:center;justify-content:center;background:var(--card2);color:var(--sec);margin-left:2px}
+.txic svg{width:14px;height:14px;stroke:currentColor;fill:none;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
+.txic:active{background:var(--sep);color:var(--text)}
+.view.bottab .list .row{text-decoration:none;color:inherit}
+.view.bottab .list a.row:active{background:var(--card2)}
