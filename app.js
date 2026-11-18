@@ -7,7 +7,7 @@
   const QS = new URLSearchParams(location.search);
   const FIXTURE = LOCAL ? QS.get("fixture") : null;          // local screenshots only
   const POLL_VISIBLE_S = 2, POLL_HIDDEN_S = 15, POLL_S = POLL_VISIBLE_S, MAX_BACKOFF = 60;
-  const APP_VERSION = "v49";   // bump with every app release (also index.html ?v= and sw.js CACHE)
+  const APP_VERSION = "v50";   // bump with every app release (also index.html ?v= and sw.js CACHE)
   const AGENTS = ["scanner", "auditor", "analyst", "executor", "risk"];
   const TITLE = { scanner: "Scanner", auditor: "Auditor", analyst: "Analyst", executor: "Executor", risk: "Risk" };
   const COLOR = { scanner: "cyan", auditor: "", analyst: "yellow", executor: "green", risk: "pink" };
@@ -2194,6 +2194,98 @@
     return `<div class="gut"><div class="seg wide dseg" id="dseg" role="tablist">${[["strategy","Strategy"],["pnl","PnL"],["journal","Journal"],["settings","Settings"]]
       .map(([k, l]) => `<button type="button" data-dt="${k}" class="${cur === k ? "on" : ""}">${l}</button>`).join("")}</div></div>`;
   }
+
+  const PRESET_LABEL = {normal:"Normal", loose:"Loose", sniping:"Sniping", mix:"Mix"};
+  const LEG_LABEL = {sniper:"Sniper", whale:"Whale Tail", momentum:"Momentum", dip:"Dip Hunter", snipe:"Snipe"};
+  const WEIGHT_LABEL = {alive:"still-alive coins", organic:"organic activity", flush:"sell-pressure (flush)", chase:"chase / FOMO risk"};
+  function dashNum(s) { return String(s == null ? "" : s).replace(/-/g, "–"); }
+  function wrPct(v) { return v == null || !isFinite(Number(v)) ? "—" : Math.round(Number(v)) + "%"; }
+  function expPct(v) {
+    if (v == null || !isFinite(Number(v))) return "—";
+    const n = Number(v), a = Math.abs(n);
+    const body = (a >= 10 ? a.toFixed(0) : a.toFixed(1)) + "%";
+    return (n > 0 ? "+" : n < 0 ? "−" : "") + body;
+  }
+  function bucketLabel(dim, key) {
+    if (!key || key === "unknown") return null;
+    const k = String(key);
+    if (dim === "score_band") return "Coins scored " + dashNum(k);
+    if (dim === "age") return ({
+      "<5m": "Coins under 5 min old", "5-15m": "Coins 5–15 min old", "15-60m": "Coins 15–60 min old",
+      "1-3h": "Coins 1–3 hours old", ">3h": "Coins over 3 hours old"
+    })[k] || ("Coins aged " + k);
+    if (dim === "mc") return "Market cap " + dashNum(k);
+    if (dim === "holders") return dashNum(k) + " holders";
+    if (dim === "vol") return "1h volume " + dashNum(k);
+    if (dim === "bs") return ({"buys>sells": "More buys than sells", "sells>buys": "More sells than buys", even: "Buys and sells roughly even"})[k] || k;
+    if (dim === "liq") return "Liquidity " + dashNum(k);
+    if (dim === "leg") return (LEG_LABEL[k] || k) + " leg";
+    if (dim === "tod") return "Trades in the " + k + " (Europe/Vilnius)";
+    if (dim === "exit") return "Exits by " + k;
+    if (dim === "book") return ({PAPER: "PAPER trades", LIVE: "LIVE trades", bot: "Bot trades", BOT: "Bot trades"})[k] || (k + " trades");
+    return dim + " " + k;
+  }
+  function bucketSentence(b) {
+    const label = bucketLabel(b.dim, b.key);
+    if (!label) return "";
+    const n = b.n, won = wrPct(b.win_rate), avg = expPct(b.expectancy);
+    return label + ": " + n + " trade" + (n === 1 ? "" : "s") + ", won " + won + ", average " + avg + " per trade";
+  }
+  function plainWhy(why) {
+    const w = String(why || "").trim();
+    if (!w) return "";
+    let m = w.match(/score (\d+\s*-\s*\d+) expectancy (-?[\d.]+)% over (\d+) trades/i);
+    if (m) {
+      const exp = Number(m[2]);
+      return "coins scored " + dashNum(m[1].replace(/\s+/g, "")) + " " + (exp < 0 ? "lose" : "win") + " on average";
+    }
+    m = w.match(/(\d+) pumped misses scored just under ([\d.]+)/i);
+    if (m) return m[1] + " missed coins that later pumped scored just under " + m[2];
+    m = w.match(/^(\w+): expectancy (-?[\d.]+)%[^→]*→\s*(size up|size down|disable|enable)/i);
+    if (m) {
+      const leg = LEG_LABEL[m[1]] || m[1];
+      const exp = Number(m[2]);
+      return "the " + leg + " leg " + (exp < 0 ? "loses" : "wins") + " on average";
+    }
+    m = w.match(/^(\w+): winners avg /i);
+    if (m) return "winners and losers differ on that signal";
+    if (/owner reset to defaults/i.test(w)) return "you reset this setting to its default";
+    return w.replace(/→/g, "—").replace(/\bn=(\d+)/g, "from $1 trades");
+  }
+  function changeSentence(a) {
+    const key = a && a.key != null ? String(a.key) : "";
+    const oldV = a && a.old, newV = a && a.new;
+    const because = plainWhy(a && a.why);
+    const tail = because ? " because " + because : "";
+    const verb = (oldN, newN) => Number(newN) > Number(oldN) ? "raised" : Number(newN) < Number(oldN) ? "lowered" : "kept";
+    if (key === "analyst.min_score")
+      return verb(oldV, newV) + " the minimum score from " + oldV + " to " + newV + tail;
+    const wm = key.match(/^analyst\.w_(\w+)$/);
+    if (wm)
+      return verb(oldV, newV) + " the weight for " + (WEIGHT_LABEL[wm[1]] || wm[1]) + " from " + oldV + " to " + newV + tail;
+    const mm = key.match(/^mix\.(\w+)\.size_mult$/);
+    if (mm)
+      return verb(oldV, newV) + " the " + (LEG_LABEL[mm[1]] || mm[1]) + " ticket size from " + oldV + "× to " + newV + "×" + tail;
+    const em = key.match(/^mix\.(\w+)\.enabled$/);
+    if (em) {
+      const on = String(newV) === "true" || newV === 1 || newV === true;
+      return "turned the " + (LEG_LABEL[em[1]] || em[1]) + " leg " + (on ? "on" : "off") + tail;
+    }
+    const tm = key.match(/^risk\.(.+_trail_pct)$/);
+    if (tm)
+      return verb(oldV, newV) + " the " + tm[1].replace(/_/g, " ") + " from " + oldV + "% to " + newV + "%" + tail;
+    if (!key) return (oldV != null ? oldV + " → " + newV : "") + tail;
+    return key.replace(/[._]/g, " ") + ": " + oldV + " → " + newV + tail;
+  }
+  function calAmt(usd) {
+    if (usd == null || !isFinite(Number(usd))) return "";
+    const v = hasEur() ? usdToEur(usd) : Number(usd);
+    if (v == null || !isFinite(v)) return "";
+    const sym = hasEur() ? "€" : "$";
+    const abs = Math.abs(v);
+    const n = abs >= 10 ? String(Math.round(abs)) : abs.toFixed(1);
+    return (v > 0 ? "+" : v < 0 ? "−" : "") + sym + n;
+  }
   function learningCard(d) {
     const L = d.learning || {};
     const on = L.enabled !== false;
@@ -2211,16 +2303,16 @@
     const need = L.min_sample || 20;
     const buckets = (L.buckets || []).filter(b => b.n >= 5).slice(0, 8);
     const changes = (applied.length ? applied : hist.slice(0, 4)).map(a =>
-      `<div class="row"><span class="main"><div class="t">${esc(a.key)}</div><div class="s wrap">${esc(String(a.old))} → ${esc(String(a.new))} · ${esc(a.why || "")}${a.n ? " · n=" + esc(a.n) : ""}</div></span></div>`
+      `<div class="row"><span class="main"><div class="t">${esc(changeSentence(a))}</div></span></div>`
     ).join("");
-    const btxt = buckets.map(b => `<span class="chipv">${esc(b.dim)} ${esc(b.key)} n=${esc(b.n)} · ${b.win_rate == null ? "—" : esc(b.win_rate) + "% wr"} · ${b.expectancy == null ? "—" : esc(b.expectancy) + "%"}</span>`).join("");
+    const btxt = buckets.map(b => { const s = bucketSentence(b); return s ? `<div class="learnline${b.expectancy < 0 ? " dn" : b.expectancy > 0 ? " up" : ""}">${esc(s)}</div>` : ""; }).join("");
     const when = last && last.ts ? vilnius(last.ts) + " Europe/Vilnius" : "no run yet";
     const btn = (pl, label) => { const l = tgLink(pl); return l ? `<a class="mbtn${pl === "learn_off" ? " ghost" : ""}" href="${esc(l)}" target="_blank" rel="noopener">${esc(label)}</a>` : ""; };
     return `<div class="sh"><h2>Learning</h2><span class="pill ${on ? "greenp" : ""}">${on ? "ON" : "OFF"}</span></div>
       <div class="card learncard">
-        <div class="s wrap">${esc(data)}. A bucket needs ≥${esc(need)} closed trades before a knob can move. Hard checks, the $1M cap, bot limits and withdraw rules stay put.</div>
+        <div class="s wrap">${esc(data)}. A group needs at least ${esc(need)} closed trades before a setting can change, and only soft settings move, by a small step. Scam checks, the $1M cap, bot limits and withdraw rules never change this way.</div>
         <div class="s wrap ter" style="margin-top:6px">Last run: ${esc(when)}${last && last.reason ? " · " + esc(last.reason) : ""}${last && last.error ? " · error, last good settings kept" : ""}</div>
-        ${btxt ? `<div class="stv" style="margin-top:8px">${btxt}</div>` : `<div class="s wrap" style="margin-top:8px">No feature bucket has 5+ trades with a known value yet (Mix fills are not tagged in the older book).</div>`}
+        ${btxt ? `<div class="learnlines">${btxt}</div>` : `<div class="s wrap" style="margin-top:8px">Not enough trades in any group yet to show a pattern (Mix fills are not tagged in the older book).</div>`}
         <div class="s" style="margin-top:10px;font-weight:650">${applied.length ? "What changed" : (hist.length ? "Recent changes" : "What changed")}</div>
         <div class="list" style="margin-top:6px">${changes || '<div class="row"><span class="main"><div class="s">No automatic changes yet.</div></span></div>'}</div>
         <div class="botbtns" style="margin-top:10px">${on ? btn("learn_off", "Turn off") : btn("learn_on", "Turn on")}${btn("learn", "Status")}${btn("learn_reset", "Reset defaults")}</div>
@@ -2242,13 +2334,15 @@
     return learningCard(d) + `<div class="sh"><h2>Strategy</h2><span class="sec">${esc(st.label || "—")}</span></div>
       <div class="gut stlist">${(st.presets || []).map(card).join("")}</div>
       <div class="list"><div class="row"><span class="main"><div class="t">Now</div><div class="s wrap">${Object.entries(v).map(([k, x]) => esc(fmtV(k, x))).join(" · ")}</div></span></div>
-      ${ls ? `<div class="row"><span class="main"><div class="t">Last switch</div><div class="s">${esc(ls.old || "?")} → ${esc(ls.new)} · ${esc(vilnius(ls.ts))} (Europe/Vilnius)</div></span></div>` : ""}</div>
+      ${ls ? `<div class="row"><span class="main"><div class="t">Last switch</div><div class="s">${esc(PRESET_LABEL[ls.old] || ls.old || "?")} → ${esc(PRESET_LABEL[ls.new] || ls.new)} · ${esc(vilnius(ls.ts))} (Europe/Vilnius)</div></span></div>` : ""}</div>
       <div class="gut s wrap" style="margin-top:10px">A switch opens the desk bot in Telegram: tap Start. Hard scam checks, the name blocklist, X check, socials and PAPER/LIVE never change with a strategy.</div>`;
   }
   function pnlView(d) {
-    const modes = Object.keys(d.pnl_days || {});
-    const mode = S.pnlMode && modes.includes(S.pnlMode) ? S.pnlMode : (modes.includes("LIVE") && d.mode === "LIVE" ? "LIVE" : modes[0] || "PAPER");
-    const days = (d.pnl_days || {})[mode] || [], by = {};
+    const MODE_ORDER = ["LIVE", "BOT", "PAPER"];
+    const daysBy = d.pnl_days || {};
+    const mode = S.pnlMode && MODE_ORDER.includes(S.pnlMode) ? S.pnlMode
+      : (d.mode === "LIVE" ? "LIVE" : "PAPER");
+    const days = daysBy[mode] || [], by = {};
     days.forEach(x => by[x.date] = x);
     const today = new Date(), tz = new Date(today.toLocaleString("en-US", { timeZone: "Europe/Vilnius" }));
     const ym = S.pnlMonth || `${tz.getFullYear()}-${String(tz.getMonth() + 1).padStart(2, "0")}`;
@@ -2262,35 +2356,51 @@
     for (let i = 0; i < lead; i++) cells += `<div class="cd empty"></div>`;
     for (let dd = 1; dd <= nd; dd++) {
       const key = `${ym}-${String(dd).padStart(2, "0")}`, x = by[key];
-      const a = x ? Math.min(1, 0.25 + 0.75 * Math.abs(x.pnl_usd) / maxAbs) : 0;
-      const col = x ? (x.pnl_usd >= 0 ? `rgba(0,211,90,${a * 0.55})` : `rgba(255,69,58,${a * 0.55})`) : "";
+      const a = x ? Math.min(1, 0.38 + 0.62 * Math.abs(x.pnl_usd) / maxAbs) : 0;
+      const col = x ? (x.pnl_usd >= 0 ? `rgba(0,200,90,${0.28 + a * 0.42})` : `rgba(255,69,58,${0.28 + a * 0.42})`) : "";
       cells += `<button type="button" class="cd${x ? (x.pnl_usd >= 0 ? " up" : " dn") : ""}${key === todayKey ? " today" : ""}${S.pnlDay === key ? " sel" : ""}" data-day="${key}" ${col ? `style="background:${col}"` : ""}>
-        <span class="dn1">${dd}</span>${x ? `<span class="dv">${x.pnl_usd >= 0 ? "+" : "-"}${Math.abs(x.pnl_usd) >= 10 ? Math.round(Math.abs(x.pnl_usd)) : Math.abs(x.pnl_usd).toFixed(1)}</span>` : ""}</button>`;
+        <span class="dn1">${dd}</span>${x ? `<span class="dv">${esc(calAmt(x.pnl_usd))}</span>` : ""}</button>`;
     }
     const prev = M === 1 ? `${Y - 1}-12` : `${Y}-${String(M - 1).padStart(2, "0")}`, next = M === 12 ? `${Y + 1}-01` : `${Y}-${String(M + 1).padStart(2, "0")}`;
     const sel = S.pnlDay && by[S.pnlDay];
     const dayRow = x => `<div class="row"><span class="main"><div class="t">${esc(reportDate(x.date))}</div>
-        <div class="s">${x.trades} trade${x.trades === 1 ? "" : "s"} · ${x.wins}W / ${x.losses}L · fees ${money(x.fees_usd)}</div></span>
+        <div class="s">${x.trades} trade${x.trades === 1 ? "" : "s"} · ${x.wins}W / ${x.losses}L${x.fees_usd ? " · fees " + money(x.fees_usd) : ""}</div></span>
         <span class="v ${x.pnl_usd >= 0 ? "green" : "red"}">${moneyS(x.pnl_usd)}<div class="s ${x.pnl_usd >= 0 ? "green" : "red"}" style="text-align:right">${pctS(x.pct)}</div></span></div>`;
-    return `<div class="sh"><h2>PnL calendar</h2>${modes.length > 1 ? `<div class="seg" id="pmode">${modes.map(m => `<button type="button" data-pm="${m}" class="${m === mode ? "on" : ""}">${m}</button>`).join("")}</div>` : `<span class="pill ${mode === "PAPER" ? "paper" : "greenp"}">${mode}</span>`}</div>
+    const tradeRow = it => {
+      const href = it.mint ? coinHref(it.mint) : "";
+      const tag = href ? "a" : "div";
+      const extra = href ? ` href="${esc(href)}"` : "";
+      const when = it.closed_at ? vilnius(it.closed_at) : "";
+      const why = [it.exit_reason, when].filter(Boolean).join(" · ");
+      const cls = it.pnl_usd == null ? "ter" : it.pnl_usd >= 0 ? "green" : "red";
+      return `<${tag} class="row"${extra}><span class="main"><div class="t">${esc(it.name || "—")}</div>
+        <div class="s wrap">${esc(why)}</div></span>
+        <span class="v ${cls}">${it.pnl_usd != null ? moneyS(it.pnl_usd) : (it.pnl_sol != null ? ((it.pnl_sol >= 0 ? "+" : "−") + Math.abs(it.pnl_sol).toFixed(3) + " SOL") : "—")}${it.pnl_pct != null ? `<div class="s ${cls}" style="text-align:right">${pctS(it.pnl_pct)}</div>` : ""}</span></${tag}>`;
+    };
+    const dayDetail = sel ? `<div class="sh"><h2 style="font-size:17px">${esc(reportDate(sel.date))}</h2>
+        <span class="sec">${sel.trades} trade${sel.trades === 1 ? "" : "s"} · ${sel.wins}W / ${sel.losses}L</span>
+        <span class="v ${sel.pnl_usd >= 0 ? "green" : "red"}" style="margin-left:auto">${moneyS(sel.pnl_usd)}</span></div>
+        <div class="list pnltrades">${(sel.items && sel.items.length) ? sel.items.map(tradeRow).join("") : dayRow(sel)}</div>` : "";
+    const modeBtns = MODE_ORDER.map(m => `<button type="button" data-pm="${m}" class="${m === mode ? "on" : ""}">${m}</button>`).join("");
+    return `<div class="sh"><h2>PnL calendar</h2><div class="seg" id="pmode">${modeBtns}</div></div>
       <div class="gut"><div class="calcard">
         <div class="calh"><button type="button" class="calnav" data-month="${prev}" aria-label="Previous month">‹</button>
-          <div class="calt"><div class="t">${MON[M - 1]} ${Y}</div><div class="calsum ${mt.pnl >= 0 ? "green" : "red"}">${mt.n ? moneyS(Math.round(mt.pnl * 100) / 100) + (mt.inv ? " · " + pctS(100 * mt.pnl / mt.inv) : "") : '<span class="ter">no closed trades</span>'}</div>
-          <div class="s">${mt.n} trades · ${mt.w}W / ${mt.l}L</div></div>
+          <div class="calt"><div class="t">${MON[M - 1]} ${Y} · ${mode}</div><div class="calsum ${mt.pnl >= 0 ? "green" : "red"}">${mt.n ? moneyS(Math.round(mt.pnl * 100) / 100) : '<span class="ter">no closed trades</span>'}</div>
+          <div class="s">${mt.n ? mt.n + " trades · " + mt.w + "W / " + mt.l + "L" + (mt.inv ? " · " + pctS(100 * mt.pnl / mt.inv) : "") : "No closed trades this month"}</div></div>
           <button type="button" class="calnav" data-month="${next}" aria-label="Next month">›</button></div>
         <div class="calw">${["M","T","W","T","F","S","S"].map(x => `<span>${x}</span>`).join("")}</div>
         <div class="calg">${cells}</div></div></div>
-      ${sel ? `<div class="sh"><h2 style="font-size:17px">${esc(reportDate(sel.date))}</h2></div><div class="list">${dayRow(sel)}</div>` : ""}
+      ${dayDetail}
       <div class="sh"><h2>Daily PnL</h2><span class="sec">realized · ${mode}</span></div>
       <div class="list">${days.length ? days.slice().reverse().slice(0, 31).map(dayRow).join("") : '<div class="empty">No closed trades yet</div>'}</div>
-      <div class="gut s wrap" style="margin-top:10px">Closed trades only, by Europe/Vilnius day, fees included. PAPER and LIVE are kept apart. Telegram: pnl today · pnl week · pnl month.</div>`;
+      <div class="gut s wrap" style="margin-top:10px">Closed trades only, by Europe/Vilnius day, fees included. LIVE, BOT and PAPER are kept apart. Tap a day to see that day’s trades. Telegram: pnl today · pnl week · pnl month.</div>`;
   }
   function journalView(d) {
     const ls = d.lessons, jr = d.journal || [];
     const tagCls = t => /rugged|dumped|stop|gave back|quiet|loss|too early/.test(t) ? "redp" : "greenp";
     const lesson = ls ? `<div class="list"><div class="row"><span class="main"><div class="t">Lessons · ${esc(ls.night || "")}</div><div class="s wrap">${esc(ls.summary || "")}</div>
         ${ls.findings && ls.findings.tags ? `<div class="stv">${Object.entries(ls.findings.tags).slice(0, 6).map(([k, n]) => `<span class="pill ${tagCls(k)}">${esc(k)} ${n}</span>`).join("")}</div>` : ""}</span></div>
-        ${(ls.applied || []).map(a => `<div class="row"><span class="main"><div class="t">Adjusted ${esc(a.key)}</div><div class="s wrap">${esc(a.old)} → ${esc(a.new)} · ${esc(a.why)}</div></span></div>`).join("")}
+        ${(ls.applied || []).map(a => `<div class="row"><span class="main"><div class="t">${esc(changeSentence(a))}</div></span></div>`).join("")}
         ${(ls.proposals || []).map(p => `<div class="row"><span class="main"><div class="s wrap">💡 ${esc(p)}</div></span></div>`).join("")}
         ${!(ls.applied || []).length ? `<div class="row"><span class="main"><div class="s">No automatic changes in the last run.</div></span></div>` : ""}</div>`
       : `<div class="list"><div class="empty">First lessons after the next 08:00 night report</div></div>`;
@@ -2827,7 +2937,7 @@
   if ("serviceWorker" in navigator && !LOCAL) {
     let swReload = false;
     navigator.serviceWorker.addEventListener("controllerchange", () => { if (swReload) return; swReload = true; location.reload(); });
-    navigator.serviceWorker.register("sw.js?v=49", { updateViaCache: "none" }).then(reg => { try { reg.update(); } catch (e) {} }).catch(() => {});
+    navigator.serviceWorker.register("sw.js?v=50", { updateViaCache: "none" }).then(reg => { try { reg.update(); } catch (e) {} }).catch(() => {});
   }
   render();
   if (BASE) poll();

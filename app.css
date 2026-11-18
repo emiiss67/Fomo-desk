@@ -1245,3 +1245,36 @@ canvas.linedrag{cursor:ns-resize}
 .txic:active{background:var(--sep);color:var(--text)}
 .view.bottab .list .row{text-decoration:none;color:inherit}
 .view.bottab .list a.row:active{background:var(--card2)}
+
+/* v50: roomier PnL calendar, colored day cells, day trade list, plain Learning lines */
+.calcard{padding:16px 14px 14px}
+.calh{margin-bottom:12px;gap:10px;align-items:center}
+.calt .t{font-size:16px;font-weight:700}
+.calsum{font-size:22px;font-weight:750;font-variant-numeric:tabular-nums;margin-top:4px;letter-spacing:-0.03em}
+.calw,.calg{gap:6px}
+.calw span{padding:0 0 8px;font-size:11px;font-weight:650;letter-spacing:.02em}
+.cd{aspect-ratio:auto;min-height:56px;border-radius:12px;padding:6px 3px 5px;gap:2px;
+  justify-content:space-between;border:0}
+.cd .dn1{font-size:11px;line-height:1.2;font-weight:650}
+.cd .dv{font-size:10px;font-weight:750;font-variant-numeric:tabular-nums;letter-spacing:-0.03em;
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:100%}
+.cd.up .dn1{color:rgba(232,255,240,.9)}
+.cd.dn .dn1{color:rgba(255,232,230,.9)}
+.cd.up .dv{color:#eafff1}
+.cd.dn .dv{color:#ffeceb}
+.cd.today{box-shadow:inset 0 0 0 1.5px var(--accent,var(--blue))}
+.cd.sel{outline:2px solid var(--text);outline-offset:-2px}
+html[data-theme="daylight"] .cd.up .dn1,html[data-theme="daylight"] .cd.up .dv{color:#0b5c2e}
+html[data-theme="daylight"] .cd.dn .dn1,html[data-theme="daylight"] .cd.dn .dv{color:#9b1c1c}
+.sh:has(+ .list.pnltrades){align-items:baseline;gap:8px}
+.list.pnltrades{margin-top:0}
+.learnlines{display:flex;flex-direction:column;gap:8px;margin-top:10px}
+.learnline{background:var(--card2);border-radius:12px;padding:10px 12px;font-size:13px;line-height:1.45;
+  color:var(--text);overflow-wrap:anywhere}
+.learnline.dn{box-shadow:inset 3px 0 0 var(--red)}
+.learnline.up{box-shadow:inset 3px 0 0 var(--green)}
+@media (max-width:390px){
+  .cd{min-height:52px;padding:5px 2px 4px}
+  .cd .dv{font-size:9.5px}
+  .calsum{font-size:20px}
+}
