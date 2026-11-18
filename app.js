@@ -7,7 +7,7 @@
   const QS = new URLSearchParams(location.search);
   const FIXTURE = LOCAL ? QS.get("fixture") : null;          // local screenshots only
   const POLL_VISIBLE_S = 2, POLL_HIDDEN_S = 15, POLL_S = POLL_VISIBLE_S, MAX_BACKOFF = 60;
-  const APP_VERSION = "v43";   // bump with every app release (also index.html ?v= and sw.js CACHE)
+  const APP_VERSION = "v44";   // bump with every app release (also index.html ?v= and sw.js CACHE)
   const AGENTS = ["scanner", "auditor", "analyst", "executor", "risk"];
   const TITLE = { scanner: "Scanner", auditor: "Auditor", analyst: "Analyst", executor: "Executor", risk: "Risk" };
   const COLOR = { scanner: "cyan", auditor: "", analyst: "yellow", executor: "green", risk: "pink" };
@@ -1008,7 +1008,8 @@
     if (fromBook) {
       return fromBook.map(r => ({
         row: { mint: r.mint, title: "Bought " + (r.name || r.mint), logo: r.logo,
-               value: r.sizeUsd != null ? money(r.sizeUsd) : "", hold: !!r.hold, tpPct: r.tpPct, tpPart: r.tpPart },
+               value: r.sizeUsd != null ? money(r.sizeUsd) : "", hold: !!r.hold, tpPct: r.tpPct, tpPart: r.tpPart,
+               halfSold: !!r.halfSold, halfPnlUsd: r.halfPnlUsd },
         coin: S.coin[r.mint]
       }));
     }
@@ -1025,8 +1026,10 @@
     const held = (p && p.hold) || r.hold;
     const tpPct = r.tpPct != null ? r.tpPct : p && p.open ? p.tpPct : null, tpPart = r.tpPct != null ? r.tpPart : p && p.tpPart;
     const tp = tpText(tpPct, tpPart);
-    return `<a class="row" href="${coinHref(r.mint)}">${logo(name, r.logo || (c && c.logo), 40)}<span class="main"><div class="t">${esc(name)}${held ? ' <span class="pill paper">HOLD</span>' : ""}</div>
-      <div class="s">${sub}${tp ? ` · <span class="green">TP ${esc(tp)}</span>` : ""}</div></span>
+    const half = (p && p.halfSold) || r.halfSold;
+    const halfPnl = (p && p.halfPnlUsd != null) ? p.halfPnlUsd : r.halfPnlUsd;
+    return `<a class="row" href="${coinHref(r.mint)}">${logo(name, r.logo || (c && c.logo), 40)}<span class="main"><div class="t">${esc(name)}${held ? ' <span class="pill paper">HOLD</span>' : ""}${half ? ' <span class="pill greenp">Half sold</span>' : ""}</div>
+      <div class="s">${sub}${half && halfPnl != null ? ` · half ${moneyS(halfPnl)}` : ""}${tp ? ` · <span class="green">TP ${esc(tp)}</span>` : ""}</div></span>
       <span class="v">${pct == null ? '<span class="ter">—</span>' : `<span class="cpill ${pct >= 0 ? "up" : "down"}">${sgn(pct, 1)}</span>`}</span></a>`;
   }
   function manualBlock(p, mint) {
@@ -1511,7 +1514,7 @@
       : c.stats.change24h != null ? [c.stats.change24h, "24h"] : c.stats.change1h != null ? [c.stats.change1h, "1h"] : null;
     const closedPill = (p && !open)
       ? `<span class="pill closedp">Closed${sold ? " · sold " + esc(sold) : ""}${reason ? " · " + esc(reason) : ""}</span>`
-      : "";
+      : (p && open && p.halfSold ? `<span class="pill greenp">Half sold${p.halfPnlUsd != null ? " · " + moneyS(p.halfPnlUsd) : ""}</span>` : "");
     const chgLabel = chg ? (chg[1] === "sold" ? "sold" : chg[1]) : "";
     const IC = { mc: '<path d="M4 19V9m5 10V5m5 14v-7m5 7V3"/>', liq: '<path d="M12 3s6 6.5 6 11a6 6 0 0 1-12 0c0-4.5 6-11 6-11z"/>',
       vol: '<path d="M3 17l5-5 4 4 8-9"/><path d="M15 7h5v5"/>', hold: '<circle cx="9" cy="8" r="3"/><path d="M3 20c0-3.3 2.7-6 6-6s6 2.7 6 6"/><path d="M16 4a3 3 0 0 1 0 6m2 4c2 .7 3 2.6 3 6"/>',
@@ -1553,6 +1556,7 @@
           ${posPnlBlock(p, mint, c)}
           <div class="kv"><span class="sec">Entry${mcOn ? " MC" : ""}</span><span>${disp(p.entryPrice)}</span></div>
           ${p.hold ? `<div class="kv"><span class="sec">Hold</span><span>owner hold · no stop / trail / timeout (rug still exits)</span></div>` : ""}
+          ${p.halfSold ? `<div class="kv"><span class="sec">Half sold</span><span class="${p.halfPnlUsd == null ? "" : p.halfPnlUsd >= 0 ? "green" : "red"}">${p.halfPnlUsd == null ? "yes · rest trailing" : moneyS(p.halfPnlUsd) + " realized · rest trailing"}</span></div>` : ""}
           <div class="kv"><span class="sec">${esc(p.nativeSymbol || "SOL")} in</span><span>${nat(p.nativeIn)}</span></div>
           <div class="kv"><span class="sec">Entry fee</span><span>${p.entryFeeUsd == null ? "n/a" : money(p.entryFeeUsd)}</span></div>
           ${p.open ? manualBlock(p, mint) : ""}
@@ -2030,6 +2034,7 @@
         ${kv2("Score weights", `alive ${esc(w.alive)} · organic ${esc(w.organic)} · flush ${esc(w.flush)} · chase ${esc(w.chase)}`)}
         ${kv2("Stop · trail", `-${esc(st.stop_pct)}% · ${esc(st.trail_pct)}% from +${esc(st.trail_start_pct)}%`)}
         ${kv2("Timeout", esc(st.timeout_h) + "h")}
+        ${st.sniper_max_trade_pct != null ? kv2("Snipe", `pullback ${esc(st.snipe_pullback_pct)}% below ${esc(st.snipe_high_window_min)}m high · wait ${esc(st.snipe_max_wait_min)}m · sniper cap ${esc(st.sniper_max_trade_pct)}% · ${esc(st.snipe_grace_min)}m grace, rug -${esc(st.snipe_rug_pct)}% / liq -${esc(st.snipe_liq_pull_pct)}%`) : ""}
       </div></div>
       <div class="gut s wrap" style="margin-top:10px">Read-only. Change by Telegram (set …, strategy …, pause, resume). LIVE needs you to type LIVE in capitals; LIVE only sends FOMO links, it never places orders.</div>`;
   }
@@ -2111,8 +2116,8 @@
       const s = p.cost_sol != null ? sol(p.cost_sol) : (p.size_sol != null ? sol(p.size_sol) : "—");
       return usd + " · " + s;
     };
-    const pos = (b.positions || []).filter(p => p && p.status !== "closed" && !p.closed_at).map(p => `<a class="row" href="#/bot/${esc(p.id)}"><span class="main"><div class="t">${esc(p.name || (p.mint || "").slice(0, 6))} <span class="ter">#${esc(p.id)}</span></div>
-        <div class="s">${esc(putIn(p))} in · now ${esc(sol(p.value_sol))}${p.status !== "open" ? " · " + esc(p.status) : ""}${p.tp_pct != null ? " · TP +" + esc(p.tp_pct) + "%" : ""}</div></span>
+    const pos = (b.positions || []).filter(p => p && p.status !== "closed" && !p.closed_at).map(p => `<a class="row" href="#/bot/${esc(p.id)}"><span class="main"><div class="t">${esc(p.name || (p.mint || "").slice(0, 6))} <span class="ter">#${esc(p.id)}</span>${p.half_sold ? ' <span class="pill greenp">Half sold</span>' : ""}</div>
+        <div class="s">${esc(putIn(p))} in · now ${esc(sol(p.value_sol))}${p.half_sold && p.half_pnl_sol != null ? " · half " + esc(solS(p.half_pnl_sol)) : ""}${p.status !== "open" ? " · " + esc(p.status) : ""}${p.tp_pct != null ? " · TP +" + esc(p.tp_pct) + "%" : ""}</div></span>
         <span class="v"><div class="${cls(p.pnl_pct)}">${esc(pctS(p.pnl_pct))}</div><div class="s ${cls(p.pnl_usd != null ? p.pnl_usd : p.pnl_sol)}">${p.pnl_usd != null ? esc(moneyS(p.pnl_usd)) : esc(solS(p.pnl_sol))}</div></span></a>`).join("");
     const trades = (b.trades || []).map(t => {
       const body = `<span class="main"><div class="t">${esc(t.side === "buy" ? "Bought" : t.side === "sell" ? "Sold" : (t.side || "Trade"))} ${esc(t.name || (t.mint || "").slice(0, 6))}</div>
@@ -2143,7 +2148,7 @@
         ${kv("Realized today", esc(solZ(b.realized_today_sol)), cls(b.realized_today_sol))}
         ${kv("Daily stop", d.stopped ? '<span class="red">HIT · no buys until 00:00</span>' : "ok · at -" + esc(lim.daily_stop_pct) + "%")}
         ${kv("Total realized", `${esc(solS(b.total_pnl_sol))} · ${esc(b.wins)}/${esc(b.closed)} wins`, cls(b.total_pnl_sol))}
-        ${kv("Per trade", "up to " + esc(lim.max_trade_pct) + "% · " + esc(lim.reserve_sol) + " SOL kept for fees")}
+        ${kv("Per trade", "up to " + esc(lim.max_trade_pct) + "%" + (lim.sniper_max_trade_pct != null ? " · sniper cap " + esc(lim.sniper_max_trade_pct) + "%" : "") + " · " + esc(lim.reserve_sol) + " SOL kept for fees")}
         <div class="botbtns">${b.enabled ? btn("bot_off", "Turn off") : btn("bot_on", "Turn on")}${b.mode === "LIVE" ? btn("bot_dry", "Back to DRY") : ""}${btn("bot", "Status")}${btn("bot_pnl", "PnL")}${btn("bot_withdraw", "Withdraw")}${btn("bot_kill", "Kill · sell all", "danger")}</div>
         ${b.mode === "DRY" ? '<div class="s wrap ter" style="margin-top:8px">Real trades: type BOT LIVE (capitals) in the desk bot.</div>' : ""}</div>
       <div class="card"><h3>Wallet</h3><div class="addr" id="botaddr" title="${esc(b.address || "")}">${esc(b.address || "not created")}</div>
@@ -2195,9 +2200,12 @@
     const solscan = p.mint ? "https://solscan.io/token/" + encodeURIComponent(p.mint) : (p.buy_link && safeUrl(p.buy_link) ? p.buy_link : "");
     const sold = soldAt(p.closed_at);
     const reason = (p.exit_reason || "").trim();
+    const halfPill = (open && p.half_sold)
+      ? `<span class="pill greenp">Half sold${p.half_pnl_sol != null ? " · " + solS(p.half_pnl_sol) : (p.half_pnl_usd != null ? " · " + moneyS(p.half_pnl_usd) : "")}</span>`
+      : "";
     const closedPill = !open
       ? `<span class="pill closedp">Closed${sold ? " · sold " + esc(sold) : ""}${reason ? " · " + esc(reason) : ""}</span>`
-      : (p.mode === "LIVE" ? '<span class="pill redp">LIVE</span>' : '<span class="pill paper">DRY</span>');
+      : (p.mode === "LIVE" ? '<span class="pill redp">LIVE</span>' : '<span class="pill paper">DRY</span>') + halfPill;
     const sub = !open
       ? `${esc(p.mode || "")}${p.strategy ? " · " + esc(p.strategy) : ""}`
       : `${esc(p.mode || "")} · ${esc(p.status || "")}${reason ? " · " + esc(reason) : ""}`;
@@ -2217,6 +2225,7 @@
         <div class="cell"><div class="k">Invested</div><div class="v">${p.cost_usd != null ? esc(money(p.cost_usd)) : "—"}<span class="ter"> · ${esc(sol(p.cost_sol))}</span></div></div>
         <div class="cell"><div class="k">${open ? "Value" : "Got back"}</div><div class="v">${p.value_usd != null ? esc(money(p.value_usd)) : "—"}<span class="ter"> · ${esc(sol(p.value_sol))}</span></div></div>
         <div class="cell"><div class="k">${open ? "PnL" : "Realized PnL"}</div><div class="v ${pnlCls}">${p.pnl_usd != null ? esc(moneyS(p.pnl_usd)) : "—"}<span class="ter"> · ${esc(solS(p.pnl_sol))}</span></div></div>
+        ${p.half_sold ? `<div class="cell"><div class="k">Half sold</div><div class="v ${cls(p.half_pnl_usd != null ? p.half_pnl_usd : p.half_pnl_sol)}">${p.half_pnl_usd != null ? esc(moneyS(p.half_pnl_usd)) : "—"<span class="ter"> · ${esc(solS(p.half_pnl_sol))}</span></div></div>` : ""}
         <div class="cell"><div class="k">Entry</div><div class="v">${esc(px(p.entry_price))}</div></div>
         <div class="cell"><div class="k">${open ? "Now" : "Exit"}</div><div class="v">${esc(px(open ? p.price : p.exit_price))}</div></div>
         <div class="cell"><div class="k">${open ? "Held for" : "Held"}</div><div class="v">${esc(heldFor(p.opened_at, open ? null : p.closed_at))}</div></div>
