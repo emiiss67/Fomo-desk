@@ -7,7 +7,7 @@
   const QS = new URLSearchParams(location.search);
   const FIXTURE = LOCAL ? QS.get("fixture") : null;          // local screenshots only
   const POLL_VISIBLE_S = 2, POLL_HIDDEN_S = 15, POLL_S = POLL_VISIBLE_S, MAX_BACKOFF = 60;
-  const APP_VERSION = "v47";   // bump with every app release (also index.html ?v= and sw.js CACHE)
+  const APP_VERSION = "v48";   // bump with every app release (also index.html ?v= and sw.js CACHE)
   const AGENTS = ["scanner", "auditor", "analyst", "executor", "risk"];
   const TITLE = { scanner: "Scanner", auditor: "Auditor", analyst: "Analyst", executor: "Executor", risk: "Risk" };
   const COLOR = { scanner: "cyan", auditor: "", analyst: "yellow", executor: "green", risk: "pink" };
@@ -1455,6 +1455,7 @@
     return best ? { addr: best, liq: bestLiq } : null;
   }
   const DS_INFO = {};
+  const LIVE_TICKS = {};  // mint -> [{t, c}] DexScreener prints while the page is open
   function dsCdn(mint) {
     return mint ? ("https://dd.dexscreener.com/ds-data/tokens/solana/" + encodeURIComponent(mint) + ".png") : null;
   }
@@ -1485,6 +1486,54 @@
     if (hit && Date.now() - hit.at < 30000) return;
     dsFetch(mint).then(info => { if (cb && info && !info.failed) cb(info); });
   }
+  function pushLiveTick(mint, px) {
+    if (!mint || px == null || !isFinite(+px) || +px <= 0) return;
+    const t = Date.now() / 1000;
+    const arr = LIVE_TICKS[mint] || (LIVE_TICKS[mint] = []);
+    const last = arr[arr.length - 1];
+    if (last && t - last.t < 2 && last.c === +px) { last.t = t; return; }
+    arr.push({ t, c: +px });
+    if (arr.length > 400) arr.splice(0, arr.length - 400);
+  }
+  function ticksToCandles(mint, step) {
+    step = step || 60;
+    const arr = LIVE_TICKS[mint] || [];
+    const by = new Map();
+    arr.forEach(p => {
+      const t = Math.floor(p.t / step) * step;
+      const prev = by.get(t);
+      if (!prev) by.set(t, { t, o: p.c, h: p.c, l: p.c, c: p.c, vol: 0 });
+      else { prev.h = Math.max(prev.h, p.c); prev.l = Math.min(prev.l, p.c); prev.c = p.c; }
+    });
+    return [...by.values()].sort((a, b) => a.t - b.t);
+  }
+  function mergeDeskLive(mint, desk, step) {
+    return mergeCandles(desk, ticksToCandles(mint, step), step || 60);
+  }
+  let liveTimer = null, liveBusy = false;
+  function scheduleLive(ms) {
+    clearTimeout(liveTimer);
+    liveTimer = setTimeout(liveTick, ms != null ? ms : (document.hidden ? 30000 : 12000));
+  }
+  function liveTick() {
+    if (liveBusy) { scheduleLive(2000); return; }
+    const mint = routeMint();
+    if (!mint) { scheduleLive(); return; }
+    liveBusy = true;
+    const prev = DS_INFO[mint] && DS_INFO[mint].price;
+    dsFetch(mint).then(info => {
+      const px = info && info.price;
+      if (px != null) pushLiveTick(mint, px);
+      const r = route();
+      const onChart = (r.name === "coin" && decodeURIComponent(r.arg || "") === mint)
+        || (r.name === "bot" && routeMint() === mint);
+      if (onChart && px != null && px !== prev && !document.querySelector("canvas.inspecting, canvas.linedrag, canvas.holding"))
+        render();
+    }).catch(() => {}).finally(() => { liveBusy = false; scheduleLive(); });
+  }
+  document.addEventListener("visibilitychange", () => { if (!document.hidden) { scheduleLive(0); } });
+  scheduleLive(4000);
+
   function routeMint() {
     const r = route();
     if (r.name === "coin" && r.arg) return decodeURIComponent(r.arg);
@@ -1672,16 +1721,28 @@
 
   // header price: the newest real price we have (GeckoTerminal's last candle close if it is newer than the desk sample)
   function livePrice(mint, c, fallbackT) {
-    const g = OHLC[ohlcKey(mint, c.age_h)], last = g && g.cs && g.cs.length ? g.cs[g.cs.length - 1] : null;
-    const deskT = c.price_ts ? Date.parse(c.price_ts) / 1000 : (fallbackT || 0);
-    const gtT = last ? last.t : 0;
-    return last && (c.price == null || gtT >= deskT) ? last.c : c.price;
+    const ticks = LIVE_TICKS[mint];
+    const tick = ticks && ticks.length ? ticks[ticks.length - 1] : null;
+    const ds = DS_INFO[mint] && !DS_INFO[mint].failed ? DS_INFO[mint] : null;
+    const dsPx = tick ? tick.c : (ds && ds.price);
+    const dsT = tick ? tick.t : (ds && (ds.price_ts || (ds.at && ds.at / 1000)) || 0);
+    const g = OHLC[ohlcKey(mint, c && c.age_h)], last = g && g.cs && g.cs.length ? g.cs[g.cs.length - 1] : null;
+    const deskT = c && c.price_ts ? Date.parse(c.price_ts) / 1000 : (fallbackT || 0);
+    const cand = [];
+    if (dsPx != null && isFinite(+dsPx)) cand.push({ t: dsT || Date.now() / 1000, c: +dsPx });
+    if (last) cand.push({ t: last.t || 0, c: last.c });
+    if (c && c.price != null && isFinite(+c.price)) cand.push({ t: deskT || 0, c: +c.price });
+    if (!cand.length) return null;
+    cand.sort((a, b) => b.t - a.t);
+    return cand[0].c;
   }
   function chartSrc(mint, c) {
     const cur = tfFor(mint, c.age_h), g = OHLC[mint + "|" + cur];
     const wait = g && g.waitUntil && g.waitUntil > Date.now() ? Math.ceil((g.waitUntil - Date.now()) / 1000) : 0;
+    const named = (c && c.candle_source) ? String(c.candle_source) : "";
     const src = g && g.cs && g.cs.length ? `${cur} · GeckoTerminal`
-      : (c.candles || []).length ? `${cur} · desk prices`
+      : named && named !== "desk prices" && (c.candles || []).length ? `${cur} · ${named}`
+      : (c.candles || []).length ? `${cur} · ${named || "desk prices"}`
       : (g ? g.loading : !!(c.pool || c.address)) ? (wait ? `GeckoTerminal busy · retry in ${wait}s` : `Loading ${cur}…`)
       : "";
     return `<span class="tfs">${Object.keys(TFS).map(k => `<button type="button" data-tf="${k}" class="${k === cur ? "on" : ""}" aria-pressed="${k === cur}">${k}</button>`).join("")}</span><span class="srcl">${esc(src)}</span>`;
@@ -1763,6 +1824,7 @@
       <div class="spacer"></div>${safeUrl(c.link) ? `<div class="ctabar"><a class="cta ${p && p.open ? "sell" : ""}" href="${esc(c.link)}" target="_blank" rel="noopener">${esc(c.button)}</a></div>` : ""}`;
     return { html, after() {
       bindManual(p, mint);
+      dsWanted(mint, () => render());
       gtWanted(c);
       const tf = tfFor(mint, c.age_h), step = TFS[tf][2], g = OHLC[mint + "|" + tf], gt = g && g.cs && g.cs.length ? g.cs : null;
       const cv = document.getElementById("candles");
@@ -1778,7 +1840,7 @@
       }
       const wrap = document.getElementById("chartcard");
       if (wrap) wrap.classList.toggle("loading", !!(g && g.loading && !gt));
-      const desk = deskCandles(c.candles, step);
+      const desk = mergeDeskLive(mint, deskCandles(c.candles, step), step);
       const base = mergeCandles(gt, desk, step), k = mcOn ? fac : 1;
       const list = k == null ? [] : k === 1 ? base : base.map(q => ({ ...q, o: q.o * k, h: q.h * k, l: q.l * k, c: q.c * k }));
       const sc = v => v == null || k == null ? null : v * k;
@@ -2484,7 +2546,7 @@
           ${open ? closedPill : ""}</div>
           ${!open ? `<div class="closedrow">${closedPill}</div>` : ""}
       </div>
-      <div class="chartcard glass" id="botposchart"><div class="chsrc">${chartSrc(p.mint, Object.assign({}, coin, { age_h: ageH, candles: coin.candles || p.candles }))}</div>
+      <div class="chartcard glass" id="botposchart"><div class="chsrc">${chartSrc(p.mint, Object.assign({}, coin, { age_h: ageH, candles: coin.candles || p.candles, candle_source: coin.candle_source || p.candle_source }))}</div>
         <div class="zoomrow"><span class="zoomctl" role="group" aria-label="Chart zoom"><button type="button" id="zout" aria-label="Zoom out">−</button><button type="button" id="zfit" aria-label="Show all candles">All</button><button type="button" id="zin" aria-label="Zoom in">+</button></span><span class="zoomhint">${open ? "pinch or drag · drag SL/TP handles" : "pinch or drag"}</span></div>
         <div class="chartwrap" style="position:relative"><canvas id="botcandles"></canvas></div></div>
       <div class="tiles"><button type="button" class="tile tog${mcOn ? " on" : ""}" id="mctog" aria-pressed="${mcOn}" ${fac ? "" : "disabled "}>
@@ -2538,12 +2600,13 @@
       const cv = document.getElementById("botcandles");
       if (cv && window.DeskChart) {
         const coint = Object.assign({ mint: p.mint, address: p.mint, chain: coin.chain || "solana" }, coin, {
-          age_h: ageH, pool: coin.pool, candles: (coin.candles && coin.candles.length) ? coin.candles : (p.candles || [])
+          age_h: ageH, pool: coin.pool, candles: (coin.candles && coin.candles.length) ? coin.candles : (p.candles || []),
+          candle_source: coin.candle_source || p.candle_source
         });
         dsWanted(p.mint, () => render());
         gtWanted(coint);
         const tf = tfFor(p.mint, coint.age_h), step = TFS[tf][2], g = OHLC[p.mint + "|" + tf], gt = g && g.cs && g.cs.length ? g.cs : null;
-        const desk = deskCandles(coint.candles || [], step);
+        const desk = mergeDeskLive(p.mint, deskCandles(coint.candles || [], step), step);
         const base = mergeCandles(gt, desk, step);
         const k = mcOn ? fac : 1;
         const list = (k == null) ? [] : base.map(q => {
@@ -2570,16 +2633,23 @@
           fmt: mcOn ? kfmt : undefined,
           emptyText: mcOn && k == null ? "Market cap n/a" : (base.length ? undefined : "no price data yet"),
           volume: volOn(), mcFmt: kfmt,
-          fit: !open && !userZ,
+          fit: !userZ && !saved,
+          tip: (candle, info) => {
+            const when = info && info.time ? info.time : "";
+            const px = candle.px != null ? candle.px : candle.c;
+            const mc = candle.mc;
+            return `<div class="t">${esc(when)}</div><div><span class="k">Price</span> ${esc(price(px))}</div>` +
+              (mc != null ? `<div><span class="k">MC</span> ${esc(kfmt(mc))}</div>` : "");
+          },
           focus: (function () {
             const openT = p.opened_at ? Date.parse(p.opened_at) / 1000 : null;
             const closeT = p.closed_at ? Date.parse(p.closed_at) / 1000 : null;
             if (!openT) return null;
             const from = openT - 30 * 60;
-            const hasGt = !!(gt && gt.length >= 5);
+            const hasMkt = !!(gt && gt.length >= 5) || (desk && desk.length >= 5) || (p.candle_source && p.candle_source !== "desk prices");
             const lastDesk = desk.length ? desk[desk.length - 1].t : null;
             let to = Date.now() / 1000;
-            if (!hasGt && closeT) to = Math.max(closeT + 2 * 3600, lastDesk || closeT);
+            if (!hasMkt && closeT) to = Math.max(closeT + 2 * 3600, lastDesk || closeT);
             if (to - from < 15 * 60) to = from + 15 * 60;
             return [from, to];
           })(),
@@ -2607,6 +2677,11 @@
           }
         });
         const persistZoom = () => { if (cv._st) { S.chartOff[zkey] = cv._st.off; S.chartSlotBot[zkey] = cv._st.slot; } };
+        cv.addEventListener("pointerup", () => {
+          if (cv._st && saved) { /* already zoomed */ }
+          if (cv._st && (S.chartSlotBot[zkey] != null || S.chartOff[zkey])) S.chartZoomUser[zkey] = true;
+          persistZoom();
+        });
         const doZoom = (dir, fromUser) => {
           DeskChart.zoom(cv, dir);
           if (fromUser) S.chartZoomUser[zkey] = dir !== "fit";
@@ -2615,17 +2690,13 @@
         const zout = document.getElementById("zout"), zin = document.getElementById("zin"), zfit = document.getElementById("zfit");
         if (zout) zout.onclick = e => { e.preventDefault(); doZoom("out", true); };
         if (zin) zin.onclick = e => { e.preventDefault(); doZoom("in", true); };
-        if (zfit) zfit.onclick = e => { e.preventDefault(); doZoom("fit", false); };
+        if (zfit) zfit.onclick = e => { e.preventDefault(); doZoom("fit", false); S.chartZoomUser[zkey] = false; };
         const ensureClosedFit = () => {
-          if (open || S.chartZoomUser[zkey] || !cv._st || !cv._info) return;
+          if (S.chartZoomUser[zkey] || saved || !cv._st || !cv._info) return;
           const pw = Math.max(1, (cv.clientWidth || 0) - 64);
           if (cv._info.slots && cv._st.slot * cv._info.slots > pw + 0.5) doZoom("fit");
         };
-        if (!open) { ensureClosedFit(); requestAnimationFrame(ensureClosedFit); }
-        else if (!saved && lastC && cv._info && !(g && g.loading && !(gt && gt.length))) {
-          const inf = cv._info;
-          if (inf.spanAll > 0 && inf.spanVis < 0.15 * inf.spanAll) doZoom("fit");
-        }
+        if (!userZ && !saved) { ensureClosedFit(); requestAnimationFrame(ensureClosedFit); }
         persistZoom();
       }
     } };
@@ -2698,7 +2769,7 @@
   if ("serviceWorker" in navigator && !LOCAL) {
     let swReload = false;
     navigator.serviceWorker.addEventListener("controllerchange", () => { if (swReload) return; swReload = true; location.reload(); });
-    navigator.serviceWorker.register("sw.js?v=47", { updateViaCache: "none" }).then(reg => { try { reg.update(); } catch (e) {} }).catch(() => {});
+    navigator.serviceWorker.register("sw.js?v=48", { updateViaCache: "none" }).then(reg => { try { reg.update(); } catch (e) {} }).catch(() => {});
   }
   render();
   if (BASE) poll();

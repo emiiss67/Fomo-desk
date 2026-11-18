@@ -351,6 +351,7 @@
     const spanAll = all.length ? Math.max(...all.map(c => c.h)) - Math.min(...all.map(c => c.l)) : 0;
     const spanVis = cs.length ? Math.max(...cs.map(c => c.h)) - Math.min(...cs.map(c => c.l)) : 0;
     canvas._info = { real: real.length, slots: all.length, step: opts.step || null, first: real[0].t, last: real[real.length - 1].t,
+                     lastAll: all.length ? all[all.length - 1].t : null, live: !!(all.length && all[all.length - 1].live),
                      sig: real.slice(-5).map(c => c.c.toPrecision(5)).join(","), slot, fit, spanAll, spanVis };
     let lo = Math.min(...cs.map(c => c.l)), hi = Math.max(...cs.map(c => c.h));
     const extraLines = [];
@@ -383,12 +384,11 @@
       const x = X(i);
       const up = c.c >= c.o, col = c.gap ? C.ter : (up ? C.up : C.down), xs = Math.round(x) + 0.5;
       if (c.gap) {
-        // Flat fills should read as a continuous step, not a 2px speck that looks like a hole.
+        // No new print this slot — draw a normal flat body (not a dashed tick).
         const y = Math.round(Y(c.c));
+        const bh = Math.max(2, Math.round(bw * 0.45));
         ctx.fillStyle = col;
-        ctx.globalAlpha = 0.7;
-        ctx.fillRect(Math.round(x - slot / 2), y - 1, Math.max(2, slot + 0.5), 2);
-        ctx.globalAlpha = 1;
+        ctx.fillRect(Math.round(x - bw / 2), y - Math.floor(bh / 2), bw, bh);
         return;
       }
       ctx.strokeStyle = col; ctx.lineWidth = 1;
