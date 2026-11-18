@@ -1278,3 +1278,6 @@ html[data-theme="daylight"] .cd.dn .dn1,html[data-theme="daylight"] .cd.dn .dv{c
   .cd .dv{font-size:9.5px}
   .calsum{font-size:20px}
 }
+
+.learncard .list .row .t{white-space:normal;overflow:visible;text-overflow:unset;line-height:1.35}
+.view .sh,#pmode,.learncard{scroll-margin-top:72px}
