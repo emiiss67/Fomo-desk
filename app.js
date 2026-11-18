@@ -7,7 +7,7 @@
   const QS = new URLSearchParams(location.search);
   const FIXTURE = LOCAL ? QS.get("fixture") : null;          // local screenshots only
   const POLL_VISIBLE_S = 2, POLL_HIDDEN_S = 15, POLL_S = POLL_VISIBLE_S, MAX_BACKOFF = 60;
-  const APP_VERSION = "v45";   // bump with every app release (also index.html ?v= and sw.js CACHE)
+  const APP_VERSION = "v46";   // bump with every app release (also index.html ?v= and sw.js CACHE)
   const AGENTS = ["scanner", "auditor", "analyst", "executor", "risk"];
   const TITLE = { scanner: "Scanner", auditor: "Auditor", analyst: "Analyst", executor: "Executor", risk: "Risk" };
   const COLOR = { scanner: "cyan", auditor: "", analyst: "yellow", executor: "green", risk: "pink" };
@@ -1504,7 +1504,14 @@
           throw e;
         });
     start.catch(failSoft).finally(() => { gtBusy = false; setTimeout(gtNext, Math.max(0, gtPauseUntil - Date.now()) + 50);
-      if (route().name === "coin" && decodeURIComponent(route().arg || "") === mint) render(); });
+      const r = route();
+      const onCoin = r.name === "coin" && decodeURIComponent(r.arg || "") === mint;
+      let onBot = false;
+      if (r.name === "bot" && r.arg && S.bot) {
+        const bp = (S.bot.book || S.bot.positions || []).find(x => String(x.id) === String(decodeURIComponent(r.arg)));
+        onBot = !!(bp && bp.mint === mint);
+      }
+      if (onCoin || onBot) render(); });
   }
   function gtNext() {
     if (gtBusy || Date.now() < gtPauseUntil || !gtQueue.length) return;
@@ -1575,7 +1582,19 @@
   const dash = v => v == null ? "—" : v;
   const mcMode = () => { try { return localStorage.getItem("desk.mcmode") === "1"; } catch (e) { return false; } };
   const setMcMode = on => { try { localStorage.setItem("desk.mcmode", on ? "1" : "0"); } catch (e) { /* private mode */ } };
-  const applyMcMode = on => { setMcMode(!!on); const cvs = document.getElementById("candles"); if (cvs) cvs._lastC = null; render(); };
+  const applyMcMode = on => { setMcMode(!!on); ["candles", "botcandles"].forEach(id => { const cvs = document.getElementById(id); if (cvs) cvs._lastC = null; }); render(); };
+  function mcFactor(coin, px, extra) {
+    extra = extra || {};
+    const stats = (coin && coin.stats) || {};
+    const price = (px != null && +px > 0) ? +px : (coin && coin.price);
+    const mcap = stats.marketCap != null ? +stats.marketCap : (extra.mcap != null ? +extra.mcap : null);
+    if (mcap != null && price != null && price > 0 && isFinite(mcap / price)) return mcap / price;
+    const supply = stats.supply != null ? +stats.supply : (coin && coin.supply != null ? +coin.supply : null);
+    if (supply != null && supply > 0 && isFinite(supply)) return supply;
+    if (extra.entryMcap != null && extra.entryPrice != null && +extra.entryPrice > 0 && isFinite(+extra.entryMcap / +extra.entryPrice))
+      return +extra.entryMcap / +extra.entryPrice;
+    return null;
+  }
 
   function coinAgeLabel(c) {
     const t = c.launched_at ? Date.parse(c.launched_at) : NaN;
@@ -2310,8 +2329,10 @@
       tp_price: p.tp_pct != null && p.entry_price ? p.entry_price * (1 + p.tp_pct / 100) : null,
       tp_pct: p.tp_pct, sl_price: p.sl_pct != null && p.entry_price ? p.entry_price * (1 - p.sl_pct / 100) : null,
       sl_pct: p.sl_pct } : null);
-    const fac = (coin.stats && coin.stats.marketCap != null && (p.price || coin.price))
-      ? coin.stats.marketCap / (p.price || coin.price) : null;
+    const liveP = p.price || coin.price;
+    const fac = mcFactor(coin, liveP, { mcap: coin.stats && coin.stats.marketCap, entryMcap: p.entry_mcap, entryPrice: p.entry_price });
+    const mcPref = (() => { try { const v = localStorage.getItem("desk.mcmode"); return v === "1" ? true : v === "0" ? false : null; } catch (e) { return null; } })();
+    const mcOn = !!(fac && (mcPref === null ? true : mcPref));
     const tpDraft = S.tpDraft[key] != null ? S.tpDraft[key] : (p.tp_pct != null ? String(p.tp_pct) : "");
     const slDraft = S.slDraft[key] != null ? S.slDraft[key] : (p.sl_pct != null ? String(p.sl_pct) : "");
     const tpPart = S.tpPart[key] || p.tp_part || "all";
@@ -2339,9 +2360,13 @@
           ${open ? closedPill : ""}</div>
           ${!open ? `<div class="closedrow">${closedPill}</div>` : ""}
       </div>
-      <div class="chartcard glass" id="botposchart"><div class="chsrc">${chartSrc(p.mint, Object.assign({}, coin, { age_h: holdH }))}</div>
+      <div class="chartcard glass" id="botposchart"><div class="chsrc">${chartSrc(p.mint, Object.assign({}, coin, { age_h: (coin.age_h != null ? coin.age_h : holdH), candles: coin.candles || p.candles }))}</div>
         <div class="zoomrow"><span class="zoomctl" role="group" aria-label="Chart zoom"><button type="button" id="zout" aria-label="Zoom out">−</button><button type="button" id="zfit" aria-label="Show all candles">All</button><button type="button" id="zin" aria-label="Zoom in">+</button></span><span class="zoomhint">${open ? "pinch or drag · drag SL/TP handles" : "pinch or drag"}</span></div>
         <div class="chartwrap" style="position:relative"><canvas id="botcandles"></canvas></div></div>
+      <div class="tiles"><button type="button" class="tile tog${mcOn ? " on" : ""}" id="mctog" aria-pressed="${mcOn}" ${fac ? "" : "disabled "}>
+        <svg viewBox="0 0 24 24"><path d="M4 19V9m5 10V5m5 14v-7m5 7V3"/></svg>
+        <div class="k">Market cap <span class="tgl">${fac ? (mcOn ? "showing MC · tap for price" : "tap to show MC") : "n/a · showing price"}</span></div>
+        <div class="vv">${fac && liveP ? kfmt((open ? liveP : (p.exit_price || liveP)) * fac) : (coin.stats && coin.stats.marketCap != null ? kfmt(coin.stats.marketCap) : "n/a")}</div></button></div>
       <div class="statgrid">
         <div class="cell"><div class="k">Invested</div><div class="v">${p.cost_usd != null ? esc(money(p.cost_usd)) : "—"}<span class="ter"> · ${esc(sol(p.cost_sol))}</span></div></div>
         <div class="cell"><div class="k">${open ? "Value" : "Got back"}</div><div class="v">${p.value_usd != null ? esc(money(p.value_usd)) : "—"}<span class="ter"> · ${esc(sol(p.value_sol))}</span></div></div>
@@ -2384,17 +2409,27 @@
       };
       bindLine("bottpin", "bottpgo", "bottpseg", "tpDraft", "tpPart", "tp");
       bindLine("botslin", "botslgo", "botslseg", "slDraft", "slPart", "sl");
+      const mct = document.getElementById("mctog");
+      if (mct && fac) mct.onclick = e => { e.preventDefault(); applyMcMode(!mcOn); };
       const cv = document.getElementById("botcandles");
       if (cv && window.DeskChart) {
-        const coint = Object.assign({ mint: p.mint }, coin, { age_h: holdH != null ? holdH : coin.age_h });
-        if (!(coint.candles && coint.candles.length) && p.candles) coint.candles = p.candles;
+        const ageH = coin.age_h != null ? coin.age_h : (coin.launched_at ? (Date.now() - Date.parse(coin.launched_at)) / 3600000 : holdH);
+        const coint = Object.assign({ mint: p.mint, address: p.mint, chain: coin.chain || "solana" }, coin, {
+          age_h: ageH, candles: (coin.candles && coin.candles.length) ? coin.candles : (p.candles || [])
+        });
         gtWanted(coint);
         const tf = tfFor(p.mint, coint.age_h), step = TFS[tf][2], g = OHLC[p.mint + "|" + tf], gt = g && g.cs && g.cs.length ? g.cs : null;
-        const desk = deskCandles(coint.candles || p.candles || [], step);
+        const desk = deskCandles(coint.candles || [], step);
         const base = mergeCandles(gt, desk, step);
-        const list = base.map(q => ({ ...q, px: q.c, mc: (fac != null && q.c != null) ? q.c * fac : null }));
+        const k = mcOn ? fac : 1;
+        const list = (k == null) ? [] : base.map(q => {
+          const px = q.c, mc = (fac != null && px != null && isFinite(px)) ? px * fac : null;
+          const c = k === 1 ? q.c : q.c * k, o = k === 1 ? q.o : q.o * k, h = k === 1 ? q.h : q.h * k, l = k === 1 ? q.l : q.l * k;
+          return { ...q, o, h, l, c, px, mc };
+        });
         const ath = athFrom(coint, base);
-        const lines = posChartLines(p.entry_price, open ? snap : null, open ? draft : {}, ath, null, { exit: open ? null : p.exit_price });
+        const sc = v => (v == null || k == null) ? null : v * k;
+        const lines = posChartLines(p.entry_price, open ? snap : null, open ? draft : {}, ath, sc, { exit: open ? null : p.exit_price });
         const livePx = livePrice(p.mint, coint, desk.length ? desk[desk.length - 1].t : 0) || p.price;
         const zkey = "bot:" + p.id;
         S.chartSlotBot = S.chartSlotBot || {};
@@ -2403,11 +2438,13 @@
         const saved = S.chartOff[zkey] != null || S.chartSlotBot[zkey] != null;
         if (saved) cv._st = Object.assign(cv._st || {}, { off: S.chartOff[zkey] || 0, slot: S.chartSlotBot[zkey] || cv._st && cv._st.slot });
         const lastC = DeskChart.candles(cv, list, null, {
-          loading: !!(coint.pool || coint.address) && (!g || g.loading) && !base.length,
+          loading: !!(coint.pool || coint.address || coint.mint) && (!g || g.loading) && !base.length,
           step, min: 1, lines, entryLine: null,
           until: Date.now() / 1000,
-          live: livePx, livePx, liveMc: fac != null && livePx != null ? livePx * fac : null,
-          emptyText: base.length ? undefined : "no price data yet",
+          live: livePx == null || k == null ? null : (k === 1 ? livePx : livePx * k),
+          livePx, liveMc: fac != null && livePx != null ? livePx * fac : null,
+          fmt: mcOn ? kfmt : undefined,
+          emptyText: mcOn && k == null ? "Market cap n/a" : (base.length ? undefined : "no price data yet"),
           volume: volOn(), mcFmt: kfmt,
           fit: !open && !userZ,
           tip: (candle, info) => {
@@ -2417,8 +2454,9 @@
             return `<div class="t">${esc(when)}</div><div><span class="k">Price</span> ${esc(price(pr))}</div>` +
               (mc != null ? `<div><span class="k">MC</span> ${esc(kfmt(mc))}</div>` : "");
           },
-          onDragEnd: (id, raw, kind) => {
+          onDragEnd: (id, px, kind) => {
             if (!open || !p.entry_price) return;
+            const raw = (k && k !== 1) ? px / k : px;
             S.lineDraft[key] = S.lineDraft[key] || {};
             if (kind === "sl" || id === "sl") {
               const pct = 100 * (1 - raw / p.entry_price);
@@ -2524,7 +2562,7 @@
   if ("serviceWorker" in navigator && !LOCAL) {
     let swReload = false;
     navigator.serviceWorker.addEventListener("controllerchange", () => { if (swReload) return; swReload = true; location.reload(); });
-    navigator.serviceWorker.register("sw.js?v=45", { updateViaCache: "none" }).then(reg => { try { reg.update(); } catch (e) {} }).catch(() => {});
+    navigator.serviceWorker.register("sw.js?v=46", { updateViaCache: "none" }).then(reg => { try { reg.update(); } catch (e) {} }).catch(() => {});
   }
   render();
   if (BASE) poll();

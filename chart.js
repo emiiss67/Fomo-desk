@@ -309,9 +309,15 @@
         last = all[all.length - 1];
       }
       if (Math.abs(last.t - bucket) <= opts.step / 2) {
-        last.c = opts.live;
-        last.h = Math.max(last.h, opts.live);
-        last.l = Math.min(last.l, opts.live);
+        // After a long gap the current bucket was a flat at the stale close. Don't turn
+        // that into one giant candle from the last print to now — start at the live price.
+        if (last.gap) {
+          last.o = last.h = last.l = last.c = opts.live;
+        } else {
+          last.c = opts.live;
+          last.h = Math.max(last.h, opts.live);
+          last.l = Math.min(last.l, opts.live);
+        }
         if (opts.livePx != null) last.px = opts.livePx;
         if (opts.liveMc != null) last.mc = opts.liveMc;
         last.gap = false;
