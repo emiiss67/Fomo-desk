@@ -7,7 +7,7 @@
   const QS = new URLSearchParams(location.search);
   const FIXTURE = LOCAL ? QS.get("fixture") : null;          // local screenshots only
   const POLL_VISIBLE_S = 1, POLL_HIDDEN_S = 15, POLL_S = POLL_VISIBLE_S, MAX_BACKOFF = 60;
-  const APP_VERSION = "v56";   // bump with every app release (also index.html ?v= and sw.js CACHE)
+  const APP_VERSION = "v57";   // bump with every app release (also index.html ?v= and sw.js CACHE)
   const AGENTS = ["scanner", "auditor", "analyst", "executor", "risk"];
   const TITLE = { scanner: "Scanner", auditor: "Auditor", analyst: "Analyst", executor: "Executor", risk: "Risk" };
   const COLOR = { scanner: "cyan", auditor: "", analyst: "yellow", executor: "green", risk: "pink" };
@@ -1683,7 +1683,7 @@
   const OHLC = {}; let gtBusy = false, gtPauseUntil = 0, gtQueue = [];
   const GT_POOL = {};   // mint -> resolved GT pool address
   // timeframe -> [GeckoTerminal endpoint, aggregate, seconds per candle]
-  const TFS = { "1m": ["minute", 1, 60], "5m": ["minute", 5, 300], "15m": ["minute", 15, 900], "1h": ["hour", 1, 3600] };
+  const TFS = { "1s": ["second", 1, 1], "1m": ["minute", 1, 60], "5m": ["minute", 5, 300], "15m": ["minute", 15, 900], "1h": ["hour", 1, 3600], "4h": ["hour", 4, 14400], "1d": ["day", 1, 86400] };
   const tfFor = (mint, ageH) => S.tf[mint] || (ageH != null && ageH > 36 ? "1h" : ageH != null && ageH > 12 ? "15m" : ageH != null && ageH > 3 ? "5m" : "1m");
   const ohlcKey = (mint, ageH) => mint + "|" + tfFor(mint, ageH);
   function gtNet(c) {
@@ -1853,13 +1853,13 @@
       return;
     }
     gtBusy = true;
-    const [ep, agg, step] = TFS[tf];
+    const [ep, agg, step] = TFS[tf] || TFS["5m"];
     const net = gtNet(c);
     OHLC[key] = Object.assign(o || { cs: [] }, { loading: true });
     const token = c.address || mint;
     const hinted = pool && !GT_POOL[mint + ":miss:" + (c.pool || "")] ? pool : null;
     const lookupUrl = `https://api.geckoterminal.com/api/v2/networks/${net}/tokens/${encodeURIComponent(token)}/pools?page=1`;
-    const ohlcvUrl = p => `https://api.geckoterminal.com/api/v2/networks/${net}/pools/${encodeURIComponent(p)}/ohlcv/${ep}?aggregate=${agg}&limit=150&currency=usd`;
+    const ohlcvUrl = p => `https://api.geckoterminal.com/api/v2/networks/${net}/pools/${encodeURIComponent(p)}/ohlcv/${ep}?aggregate=${agg}&limit=${step <= 1 ? 1000 : 150}&currency=usd`;
     const failSoft = e => {
       if (!e || !e.status || e.status === 429) {
         gtPauseUntil = Date.now() + 15000;
@@ -1870,7 +1870,8 @@
     const loadOhlcv = p => gtFetch(ohlcvUrl(p)).then(j => {
       const cs = gtParseOhlcv(j, step);
       // A handful of dust-pool prints is worse than the desk series — keep looking.
-      if (!cs.length || cs.length < 5) { const e = new Error("HTTP 404"); e.status = 404; throw e; }
+      const minCs = step >= 3600 ? 1 : 5;
+      if (!cs.length || cs.length < minCs) { const e = new Error("HTTP 404"); e.status = 404; throw e; }
       GT_POOL[mint] = p;
       OHLC[key] = { at: Date.now(), cs, label: tf, step, loading: false, pool: p };
     });
@@ -2029,6 +2030,34 @@
     cand.sort((a, b) => b.t - a.t);
     return cand[0].c;
   }
+  function tfZoomKeys(mint) {
+    const keys = [mint];
+    const r = route();
+    if (r.name === "bot" && r.arg) keys.push("bot:" + decodeURIComponent(r.arg));
+    return keys;
+  }
+  function applyTf(mint, tf) {
+    if (!mint || !TFS[tf] || S.tf[mint] === tf) return false;
+    S.tf[mint] = tf;
+    tfZoomKeys(mint).forEach(k => {
+      S.chartOff[k] = 0;
+      if (S.chartSlotBy) S.chartSlotBy[k] = null;
+      if (S.chartSlotBot) S.chartSlotBot[k] = null;
+      if (S.chartZoomUser) S.chartZoomUser[k] = false;
+    });
+    ["candles", "botcandles"].forEach(id => {
+      const cvs = document.getElementById(id);
+      if (cvs) { cvs._st = Object.assign(cvs._st || {}, { off: 0, slot: undefined }); cvs._lastC = null; }
+    });
+    render();
+    return true;
+  }
+  function bindTfButtons(mint) {
+    if (!mint) return;
+    view.querySelectorAll("[data-tf]").forEach(b => {
+      b.onclick = e => { e.preventDefault(); applyTf(mint || b.dataset.mint, b.dataset.tf); };
+    });
+  }
   function chartSrc(mint, c) {
     const cur = tfFor(mint, c.age_h), g = OHLC[mint + "|" + cur];
     const wait = g && g.waitUntil && g.waitUntil > Date.now() ? Math.ceil((g.waitUntil - Date.now()) / 1000) : 0;
@@ -2039,7 +2068,7 @@
       : ((c.candles || []).length || liveN) ? `${cur} · ${named || (liveN ? "DexScreener" : "desk prices")}`
       : (g ? g.loading : !!(c.pool || c.address)) ? (wait ? `GeckoTerminal busy · retry in ${wait}s` : `Loading ${cur}…`)
       : "";
-    return `<span class="tfs">${Object.keys(TFS).map(k => `<button type="button" data-tf="${k}" class="${k === cur ? "on" : ""}" aria-pressed="${k === cur}">${k}</button>`).join("")}</span><span class="srcl">${esc(src)}</span>`;
+    return `<span class="tfs" role="group" aria-label="Chart timeframe">${Object.keys(TFS).map(k => `<button type="button" data-tf="${k}" data-mint="${esc(mint)}" class="${k === cur ? "on" : ""}" aria-pressed="${k === cur}">${k}</button>`).join("")}</span><span class="srcl">${esc(src)}</span>`;
   }
   function hintCoin(mint) {
     if (!mint) return null;
@@ -2177,7 +2206,7 @@
       bindManual(p, mint);
       dsWanted(mint, () => render());
       gtWanted(c);
-      const tf = tfFor(mint, c.age_h), step = TFS[tf][2], g = OHLC[mint + "|" + tf], gt = g && g.cs && g.cs.length ? g.cs : null;
+      const tf = tfFor(mint, c.age_h), step = (TFS[tf] || TFS["5m"])[2], g = OHLC[mint + "|" + tf], gt = g && g.cs && g.cs.length ? g.cs : null;
       const cv = document.getElementById("candles");
       S.chartSlotBy = S.chartSlotBy || {};
       S.chartZoomUser = S.chartZoomUser || {};
@@ -2265,11 +2294,7 @@
         requestAnimationFrame(ensureFit);
       }
       breathe(lastC);
-      view.querySelectorAll("[data-tf]").forEach(b => b.onclick = e => { e.preventDefault(); if (S.tf[mint] === b.dataset.tf) return;
-        S.tf[mint] = b.dataset.tf; S.chartOff[mint] = 0; S.chartSlotBy[mint] = null; S.chartZoomUser[mint] = false;
-        const cvs = document.getElementById("candles");
-        if (cvs) { cvs._st = Object.assign(cvs._st || {}, { off: 0, slot: undefined }); cvs._lastC = null; }
-        render(); });
+      bindTfButtons(mint);
     } };
   }
 
@@ -3077,7 +3102,7 @@
         });
         dsWanted(p.mint, () => render());
         gtWanted(coint);
-        const tf = tfFor(p.mint, coint.age_h), step = TFS[tf][2], g = OHLC[p.mint + "|" + tf], gt = g && g.cs && g.cs.length ? g.cs : null;
+        const tf = tfFor(p.mint, coint.age_h), step = (TFS[tf] || TFS["5m"])[2], g = OHLC[p.mint + "|" + tf], gt = g && g.cs && g.cs.length ? g.cs : null;
         const desk = mergeDeskLive(p.mint, deskCandles(coint.candles || [], step), step);
         const base = mergeCandles(gt, desk, step);
         const k = mcOn ? fac : 1;
@@ -3171,6 +3196,7 @@
         if (!userZ && !saved) { ensureClosedFit(); requestAnimationFrame(ensureClosedFit); }
         persistZoom();
       }
+      bindTfButtons(p.mint);
     } };
   }
 
@@ -3208,9 +3234,16 @@
       if (refocus) q.focus(); }
     view.querySelectorAll("[data-range]").forEach(b => b.onclick = () => { S.range = b.dataset.range; chartPrev = null; render(); });
     view.querySelectorAll("[data-book]").forEach(b => b.onclick = () => { S.book = b.dataset.book; chartPrev = null; render(); });
+    bindTfButtons(routeMint());
   }
   let navAnim = false;
   document.addEventListener("click", e => {
+    const tfBtn = e.target.closest && e.target.closest("[data-tf]");
+    if (tfBtn && view.contains(tfBtn)) {
+      e.preventDefault();
+      applyTf(tfBtn.dataset.mint || routeMint(), tfBtn.dataset.tf);
+      return;
+    }
     const a = e.target.closest && e.target.closest("a");
     if (!a || a.target === "_blank" || a.hasAttribute("download") || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
     const href = a.getAttribute("href") || "";
@@ -3243,7 +3276,7 @@
   if ("serviceWorker" in navigator && !LOCAL) {
     let swReload = false;
     navigator.serviceWorker.addEventListener("controllerchange", () => { if (swReload) return; swReload = true; location.reload(); });
-    navigator.serviceWorker.register("sw.js?v=56", { updateViaCache: "none" }).then(reg => { try { reg.update(); } catch (e) {} }).catch(() => {});
+    navigator.serviceWorker.register("sw.js?v=57", { updateViaCache: "none" }).then(reg => { try { reg.update(); } catch (e) {} }).catch(() => {});
   }
   render();
   if (BASE) poll();
