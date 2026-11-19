@@ -1301,3 +1301,5 @@ html[data-theme="daylight"] .cd.dn .dn1,html[data-theme="daylight"] .cd.dn .dv{c
 .botacts #bothold{flex:1 1 100%}
 .botacts{flex-wrap:wrap}
 .botacts #bothold{min-height:42px;border-radius:12px;font-weight:700}.botacts #bothold.ghost{border:1px solid var(--orange);color:var(--orange)}
+.attsrc{display:inline-block;font-size:10px;font-weight:700;letter-spacing:.02em;padding:1px 6px;margin-left:4px;border-radius:999px;background:rgba(255,176,46,.16);color:var(--orange);vertical-align:2px}
+.attscore{display:inline-block;min-width:30px;text-align:center;font-weight:800;padding:3px 7px;border-radius:10px;background:rgba(255,176,46,.18);color:var(--orange)}

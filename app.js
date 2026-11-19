@@ -7,7 +7,7 @@
   const QS = new URLSearchParams(location.search);
   const FIXTURE = LOCAL ? QS.get("fixture") : null;          // local screenshots only
   const POLL_VISIBLE_S = 1, POLL_HIDDEN_S = 15, POLL_S = POLL_VISIBLE_S, MAX_BACKOFF = 60;
-  const APP_VERSION = "v55";   // bump with every app release (also index.html ?v= and sw.js CACHE)
+  const APP_VERSION = "v56";   // bump with every app release (also index.html ?v= and sw.js CACHE)
   const AGENTS = ["scanner", "auditor", "analyst", "executor", "risk"];
   const TITLE = { scanner: "Scanner", auditor: "Auditor", analyst: "Analyst", executor: "Executor", risk: "Risk" };
   const COLOR = { scanner: "cyan", auditor: "", analyst: "yellow", executor: "green", risk: "pink" };
@@ -777,6 +777,9 @@
         if (first || need("bot.json") || !S.bot) {
           try { S.bot = await get("bot.json"); S.botMissing = false; } catch (e) { if (e.status) S.botMissing = true; else throw e; }
         }
+        if (first || need("attention.json") || S.attention === undefined) {
+          try { S.attention = await get("attention.json"); } catch (e) { if (e.status) S.attention = null; else throw e; }
+        }
         if (first || need("desk.json") || !S.desk) {
           try { S.desk = await get("desk.json"); S.deskMissing = false; } catch (e) { if (e.status) S.deskMissing = true; else throw e; }
         }
@@ -1248,6 +1251,33 @@
     scanPollTimer = setTimeout(tick, 1500);
   }
 
+  // ---------- v56 Getting attention (pump.fun callouts are behind Cloudflare; DEX boosts / takeovers / GT trending / buys) ----------
+  const ATT_SRC = { top_boost: "Top boosted", boost: "DEX boost", cto: "Takeover", profile: "New profile", gt: "Trending", rising: "Buys rising" };
+  const usdC = v => v == null ? "—" : v >= 1e6 ? "$" + (v / 1e6).toFixed(1) + "M" : v >= 1e3 ? "$" + Math.round(v / 1e3) + "K" : "$" + Math.round(v);
+  function attRow(c) {
+    const nm = c.symbol || c.name || (c.mint || "").slice(0, 6);
+    const why = (c.why || []).slice(0, 2).join(" · ") || (c.sources || []).map(x => ATT_SRC[x] || x).join(" · ");
+    const tx = c.b5 != null ? ` · 5m ${c.b5}/${c.s5 != null ? c.s5 : "?"}` : "";
+    return `<a class="row" href="#/scan/${encodeURIComponent(c.mint)}">${logo(nm, c.image || logoFor(c.mint), 40)}
+      <span class="main"><div class="t">${esc(nm)} ${(c.sources || []).filter(x => !(x === "boost" && (c.sources || []).includes("top_boost"))).slice(0, 2).map(x => `<span class="attsrc">${esc(ATT_SRC[x] || x)}</span>`).join("")}</div>
+      <div class="s wrap">${esc(why)}${esc(" · MC " + usdC(c.mcap) + tx)}</div></span>
+      <span class="v"><span class="attscore" title="attention score">${esc(String(Math.round(c.score || 0)))}</span>
+      ${c.p5 != null ? `<div class="pnl ${c.p5 >= 0 ? "green" : "red"}">${esc(sgn(c.p5, 1))} 5m</div>` : ""}</span></a>`;
+  }
+  function attentionSection(n) {
+    const a = S.attention;
+    if (!a || !(a.coins || []).length) return "";
+    const coins = a.coins.slice(0, n);
+    return `<div class="sh"><h2>Getting attention</h2><a class="ter sm" href="#/hot">See all ${a.coins.length}</a></div>
+      <div class="list glass">${coins.map(attRow).join("")}</div>`;
+  }
+  function hotScreen() {
+    const a = S.attention;
+    const body = !a ? '<div class="empty">The desk hasn’t published the attention list yet</div>'
+      : (a.coins || []).length ? a.coins.map(attRow).join("") : '<div class="empty">Nothing getting attention right now</div>';
+    return backbar("Getting attention", "#/home") + `<div class="gut s sec wrap" style="margin:10px 0">Coins people are pushing now: DEX boosts, community takeovers, GeckoTerminal trending and fast-rising buys (pump.fun callouts are behind a Cloudflare check). Tap one to scan it. The bot only gives these a small score bump when its own scanner finds them; it never buys on attention alone.</div>
+      <div class="list glass">${body}</div>${a && a.updated ? `<div class="gut ter sm" style="margin-top:8px">Updated ${esc(String(a.updated).slice(11, 16))} UTC</div>` : ""}`;
+  }
   function home() {
 
     if (!S.state) return loadingHome();
@@ -1291,6 +1321,7 @@
       <div class="list glass">${((bk.wallet && bk.wallet.holdings) || []).length ? (bk.wallet.holdings).map(holdRow).join("") : `<div class="empty">${bk.wallet && bk.wallet.stale ? "Wallet sync stale" : "No holdings over $1"}</div>`}</div>`
         : `<div class="sh"><h2>Open positions</h2><span class="ter sm">${openPositions().length || ""}</span></div>
       <div class="list glass">${openPositions().length ? openPositions().map(posRow).join("") : '<div class="empty">No open positions</div>'}</div>`)}
+      ${missesOn ? "" : attentionSection(5)}
       <div class="sh"><h2>Agents · ${st.running} running</h2></div>
       <div class="carousel">${st.agents.map(agentCard).join("")}</div>
       <div class="sh"><h2>New coins</h2><span class="ter sm">${(st.new_coins || []).length ? "live" : ""}${(st.new_coins || []).length ? '<i class="live running" style="margin-left:6px"></i>' : ""}</span></div>
@@ -3149,7 +3180,7 @@
     if (document.activeElement && ["tpin", "slin", "bottpin", "botslin", "scanin", "scanpct"].includes(document.activeElement.id)) return;
     const r = route();
     view.classList.toggle("bottab", r.name === "bot");
-    document.querySelectorAll(".tab").forEach(t => t.classList.toggle("on", t.dataset.tab === r.name || ((r.name === "coin" || r.name === "audit" || r.name === "scan") && t.dataset.tab === "home") || (r.name === "report" && t.dataset.tab === "activity")));
+    document.querySelectorAll(".tab").forEach(t => t.classList.toggle("on", t.dataset.tab === r.name || ((r.name === "coin" || r.name === "audit" || r.name === "scan" || r.name === "hot") && t.dataset.tab === "home") || (r.name === "report" && t.dataset.tab === "activity")));
     const tabs = [...document.querySelectorAll(".tab")], on = tabs.findIndex(t => t.classList.contains("on")), ind = document.getElementById("tabind");
     if (ind && on >= 0) ind.style.transform = `translateX(${on * 100}%)`;
     if (!BASE) { if (!document.getElementById("gb")) { view.innerHTML = gate(); bindGate(); } document.getElementById("tabbar").hidden = true; return; }
@@ -3157,6 +3188,7 @@
       : r.name === "desk" ? deskTab() : r.name === "agents" ? agentsTab() : r.name === "activity" ? activityTab() : r.name === "account" ? accountTab()
       : r.name === "coin" && r.arg ? coinScreen(decodeURIComponent(r.arg)) : r.name === "audit" ? auditScreen(r.arg && decodeURIComponent(r.arg))
       : r.name === "scan" ? scanScreen(r.arg && decodeURIComponent(r.arg))
+      : r.name === "hot" ? hotScreen()
       : r.name === "report" && r.arg ? reportScreen(decodeURIComponent(r.arg)) : home();
     const o = typeof out === "string" ? { html: out } : out;
     const ae = document.activeElement && document.activeElement.id === "q";
@@ -3211,7 +3243,7 @@
   if ("serviceWorker" in navigator && !LOCAL) {
     let swReload = false;
     navigator.serviceWorker.addEventListener("controllerchange", () => { if (swReload) return; swReload = true; location.reload(); });
-    navigator.serviceWorker.register("sw.js?v=55", { updateViaCache: "none" }).then(reg => { try { reg.update(); } catch (e) {} }).catch(() => {});
+    navigator.serviceWorker.register("sw.js?v=56", { updateViaCache: "none" }).then(reg => { try { reg.update(); } catch (e) {} }).catch(() => {});
   }
   render();
   if (BASE) poll();
