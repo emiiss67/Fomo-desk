@@ -1296,3 +1296,8 @@ html[data-theme="daylight"] .cd.dn .dn1,html[data-theme="daylight"] .cd.dn .dv{c
 @media (max-width:360px){.scanform #scanpct{flex-basis:62px;width:62px}}
 .scanform input{min-width:0}
 .scansize{margin-top:6px}
+.pill.holdp{background:rgba(255,176,46,.22);color:var(--orange);font-weight:800;letter-spacing:.04em;text-decoration:none}
+.mbtn.holdon{background:var(--orange);color:#000}
+.botacts #bothold{flex:1 1 100%}
+.botacts{flex-wrap:wrap}
+.botacts #bothold{min-height:42px;border-radius:12px;font-weight:700}.botacts #bothold.ghost{border:1px solid var(--orange);color:var(--orange)}

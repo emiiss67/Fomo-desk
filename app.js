@@ -7,7 +7,7 @@
   const QS = new URLSearchParams(location.search);
   const FIXTURE = LOCAL ? QS.get("fixture") : null;          // local screenshots only
   const POLL_VISIBLE_S = 1, POLL_HIDDEN_S = 15, POLL_S = POLL_VISIBLE_S, MAX_BACKOFF = 60;
-  const APP_VERSION = "v54";   // bump with every app release (also index.html ?v= and sw.js CACHE)
+  const APP_VERSION = "v55";   // bump with every app release (also index.html ?v= and sw.js CACHE)
   const AGENTS = ["scanner", "auditor", "analyst", "executor", "risk"];
   const TITLE = { scanner: "Scanner", auditor: "Auditor", analyst: "Analyst", executor: "Executor", risk: "Risk" };
   const COLOR = { scanner: "cyan", auditor: "", analyst: "yellow", executor: "green", risk: "pink" };
@@ -1153,6 +1153,43 @@
        ${link ? `<a class="cta" style="margin-top:8px;opacity:.9" href="${esc(link)}" target="_blank" rel="noopener">Add on FOMO</a>` : ""}`;
     return { html, after() { bindScanForm(); startScanPoll(mint); } };
   }
+  // 2026-11-19 owner Hold: the same signed-upload request path as the Scan box, with an action.
+  async function deskRequest(body) {
+    let tok = null;
+    try { tok = localStorage.getItem("desk.t"); } catch (e) { tok = null; }
+    if (!tok || !BASE) throw new Error("token");
+    const hex = await scanAuthHex(tok);
+    const r = await fetch(BASE + "_auth/" + hex + ".json", { cache: "no-store" });
+    if (!r.ok) throw new Error("auth");
+    const j = await r.json();
+    if (!j || !j.put) throw new Error("auth");
+    const put = await fetch(j.put, { method: "PUT", headers: { "Content-Type": "application/json", "x-upsert": "true" },
+      body: JSON.stringify(Object.assign({ ts: Date.now() }, body)) });
+    if (!put.ok) throw new Error("put");
+  }
+  const HOLD_BUSY = {};
+  const holdBusy = id => HOLD_BUSY[id] && Date.now() - HOLD_BUSY[id] < 15000;
+  async function toggleHold(id, on) {
+    if (holdBusy(id)) return;
+    HOLD_BUSY[id] = Date.now(); render();
+    try {
+      await deskRequest({ action: on ? "hold" : "release", id: +id });
+      toast(on ? "Hold sent · the bot stops automatic sells" : "Release sent · exits back on");
+      setTimeout(pollNow, 2500); setTimeout(pollNow, 5000);
+    } catch (e) {
+      delete HOLD_BUSY[id];
+      const l = tgLink((on ? "bothold_" : "botrelease_") + id);
+      toast("Opening Telegram to " + (on ? "hold" : "release"));
+      if (l) window.open(l, "_blank", "noopener");
+    }
+    setTimeout(() => { delete HOLD_BUSY[id]; render(); }, 15000);
+    render();
+  }
+  function exitPlanText(x) {
+    if (!x || !x.v2) return "";
+    return `Exit plan: sell ${x.tp_sell_pct}% at ${x.tp_multiple}x, then the rest trails ${x.runner_trail_pct}% below its peak (stop moves to entry) and everything sells at ${x.moon_multiple}x. Stop -${x.stop_pct}%.` +
+      (x.exhaust_enabled ? " Sells all early if buyers dry up and the price keeps bleeding." : "");
+  }
   async function scanAuthHex(tok) {
     const enc = new TextEncoder();
     const key = await crypto.subtle.importKey("raw", enc.encode(tok), { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
@@ -2048,6 +2085,8 @@
     const closedPill = (p && !open)
       ? `<span class="pill closedp">Closed${sold ? " · sold " + esc(sold) : ""}${reason ? " · " + esc(reason) : ""}</span>`
       : (p && open && p.halfSold ? `<span class="pill greenp">Half sold${p.halfPnlUsd != null ? " · " + moneyS(p.halfPnlUsd) : ""}</span>` : "");
+    const botHeld = ((S.bot && (S.bot.book || S.bot.positions)) || []).find(b => b && b.mint === mint && b.status !== "closed" && b.hold);
+    const holdPill = botHeld ? `<a class="pill holdp" href="#/bot/${esc(botHeld.id)}">HOLD · bot #${esc(botHeld.id)}</a>` : "";
     const chgLabel = chg ? (chg[1] === "sold" ? "sold" : chg[1]) : "";
     const IC = { mc: '<path d="M4 19V9m5 10V5m5 14v-7m5 7V3"/>', liq: '<path d="M12 3s6 6.5 6 11a6 6 0 0 1-12 0c0-4.5 6-11 6-11z"/>',
       vol: '<path d="M3 17l5-5 4 4 8-9"/><path d="M15 7h5v5"/>', hold: '<circle cx="9" cy="8" r="3"/><path d="M3 20c0-3.3 2.7-6 6-6s6 2.7 6 6"/><path d="M16 4a3 3 0 0 1 0 6m2 4c2 .7 3 2.6 3 6"/>',
@@ -2070,7 +2109,7 @@
           ${c.audit_chip ? `<a href="#/audit/${encodeURIComponent(mint)}" class="chip ${chipOk ? "ok" : "bad"}">🛡 ${esc(c.audit_chip)}</a>` : ""}</div>
         <button type="button" class="pricerow" id="pricetog" aria-pressed="${mcOn}" aria-label="${mcOn ? "Show token price" : "Show market cap"}"><span class="big pricebig glow">${mcOn ? tick("m" + mint, fac == null ? null : (livePrice(mint, c) == null ? null : livePrice(mint, c) * fac), v => v == null ? "n/a" : kfmt(v)) : tick("p" + mint, livePrice(mint, c), price)}</span>${mcOn ? `<span class="ter sm mclbl">MC</span>` : ""}
           ${chg ? `<span class="cpill lg2 ${chg[0] >= 0 ? "up" : "down"}">${chg[0] >= 0 ? "▲" : "▼"} ${Math.abs(chg[0]).toFixed((chg[1] === "since entry" || chg[1] === "sold") ? 2 : 1)}% <span class="ter">${esc(chgLabel)}</span></span>` : ""}
-          ${closedPill}
+          ${closedPill}${holdPill}
           <span class="mctip">${mcOn ? "tap to show price" : "tap to show market cap"}</span></button>
       </div>
       <div class="chartcard glass" id="chartcard"><div class="chsrc">${chartSrc(mint, c)}</div>
@@ -2795,7 +2834,7 @@
       const sub = [p.strategy || p.status, p.half_sold ? "half sold" : null, p.tp_pct != null ? "TP +" + p.tp_pct + "%" : null].filter(Boolean).join(" · ");
       const pnlV = p.pnl_usd != null ? p.pnl_usd : p.pnl_sol;
       return `<a class="row posrow" href="#/bot/${esc(p.id)}">${logo(nm, p.logo || logoFor(p.mint), 40)}
-        <span class="main"><div class="t">${esc(nm)} <span class="ter">#${esc(p.id)}</span></div>
+        <span class="main"><div class="t">${esc(nm)} <span class="ter">#${esc(p.id)}</span>${p.hold && p.status !== "closed" ? ' <span class="pill holdp">HOLD</span>' : ""}</div>
         <div class="s">${esc(sub)}</div></span>
         <span class="v"><div class="amt ${cls(pnlV)}">${p.pnl_usd != null ? esc(moneyS(p.pnl_usd)) : esc(solS(p.pnl_sol))}</div>
         <div class="pnl ${cls(p.pnl_pct)}">${esc(sgn(p.pnl_pct))}</div></span></a>`;
@@ -2925,7 +2964,8 @@
       : "";
     const closedPill = !open
       ? `<span class="pill closedp">Closed${sold ? " · sold " + esc(sold) : ""}${reason ? " · " + esc(reason) : ""}</span>`
-      : (p.mode === "LIVE" ? '<span class="pill redp">LIVE</span>' : '<span class="pill paper">DRY</span>') + halfPill;
+      : (p.mode === "LIVE" ? '<span class="pill redp">LIVE</span>' : '<span class="pill paper">DRY</span>') + halfPill
+        + (p.hold ? '<span class="pill holdp">HOLD</span>' : "");
     const sub = !open
       ? `${esc(p.mode || "")}${p.strategy ? " · " + esc(p.strategy) : ""}`
       : `${esc(p.mode || "")} · ${esc(p.status || "")}${reason ? " · " + esc(reason) : ""}`;
@@ -2967,8 +3007,12 @@
         <div class="mbtns"><a class="mbtn${slGo ? "" : " off"}" id="botslgo" ${slGo ? `href="${esc(slGo)}"` : ""} target="_blank" rel="noopener">Set SL</a>
           ${p.sl_pct != null ? `<a class="mbtn ghost" href="${esc(tgLink("botsloff_" + p.id) || "")}" target="_blank" rel="noopener">Clear SL</a>` : ""}</div>
       </div>
-      <div class="botacts">${btn("botsell_" + p.id, "Sell")}${btn("botsellhalf_" + p.id, "Half")}</div>
-      <div class="s wrap ter gutbot">Saves in Telegram. A hit sells through the bot’s usual path. This does not turn the bot on.</div>` : ""}
+      <div class="botacts">${btn("botsell_" + p.id, "Sell")}${btn("botsellhalf_" + p.id, "Half")}
+        <button type="button" class="mbtn${p.hold ? " holdon" : " ghost"}" id="bothold" data-id="${esc(p.id)}" data-on="${p.hold ? "0" : "1"}">${holdBusy(p.id) ? "Sending…" : (p.hold ? "Release hold" : "Hold")}</button></div>
+      <div class="s wrap gutbot ${p.hold ? "orange" : "ter"}">${p.hold
+        ? "HOLD is on: the bot’s own exits are paused (stop loss, trail, 2x / 10x take profit, momentum exit) and your Set SL is paused too. Your own Set TP still sells (All or Half). Sell yourself, or Release hold to turn exits back on (the trail restarts from the price then)."
+        : esc(exitPlanText(b.exit_plan))}</div>
+      <div class="s wrap ter gutbot">Sell / TP / SL save in Telegram. A hit sells through the bot’s usual path. This does not turn the bot on.</div>` : ""}
       ${solscan && safeUrl(solscan) ? `<div class="solmini">${ext(solscan, "Solscan", "link")}</div>` : ""}
       <div class="note mono">${esc(p.mint || "")}</div>
       <div class="spacer"></div>`;
@@ -2990,6 +3034,8 @@
       };
       bindLine("bottpin", "bottpgo", "bottpseg", "tpDraft", "tpPart", "tp");
       bindLine("botslin", "botslgo", "botslseg", "slDraft", "slPart", "sl");
+      const hb = document.getElementById("bothold");
+      if (hb) hb.onclick = e => { e.preventDefault(); toggleHold(hb.dataset.id, hb.dataset.on === "1"); };
       const mct = document.getElementById("mctog");
       if (mct && fac) mct.onclick = e => { e.preventDefault(); applyMcMode(!mcOn); };
       const cv = document.getElementById("botcandles");
@@ -3165,7 +3211,7 @@
   if ("serviceWorker" in navigator && !LOCAL) {
     let swReload = false;
     navigator.serviceWorker.addEventListener("controllerchange", () => { if (swReload) return; swReload = true; location.reload(); });
-    navigator.serviceWorker.register("sw.js?v=54", { updateViaCache: "none" }).then(reg => { try { reg.update(); } catch (e) {} }).catch(() => {});
+    navigator.serviceWorker.register("sw.js?v=55", { updateViaCache: "none" }).then(reg => { try { reg.update(); } catch (e) {} }).catch(() => {});
   }
   render();
   if (BASE) poll();
