@@ -1286,3 +1286,9 @@ html[data-theme="daylight"] .cd.dn .dn1,html[data-theme="daylight"] .cd.dn .dv{c
 .seg.wide.pmodes{width:100%;margin:0 0 12px;padding:3px;border-radius:12px;box-sizing:border-box}
 .seg.wide.pmodes button{flex:1 1 0;min-width:0;height:40px;line-height:40px;padding:0 8px;
   font-size:15px;font-weight:650;border-radius:9px}
+
+/* v52: scan a coin */
+.scanbox{margin:16px var(--g,16px);padding:14px 14px 12px;border-radius:16px}
+.scanform{display:flex;gap:8px;align-items:center}
+.scanform input{flex:1;height:44px;border-radius:12px;border:0;background:var(--bg, #0b0d10);color:var(--text);padding:0 14px;font:inherit;font-size:16px}
+.scanform .mbtn{height:44px;padding:0 16px;flex:0 0 auto;white-space:nowrap}

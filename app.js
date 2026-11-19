@@ -7,7 +7,7 @@
   const QS = new URLSearchParams(location.search);
   const FIXTURE = LOCAL ? QS.get("fixture") : null;          // local screenshots only
   const POLL_VISIBLE_S = 2, POLL_HIDDEN_S = 15, POLL_S = POLL_VISIBLE_S, MAX_BACKOFF = 60;
-  const APP_VERSION = "v51";   // bump with every app release (also index.html ?v= and sw.js CACHE)
+  const APP_VERSION = "v52";   // bump with every app release (also index.html ?v= and sw.js CACHE)
   const AGENTS = ["scanner", "auditor", "analyst", "executor", "risk"];
   const TITLE = { scanner: "Scanner", auditor: "Auditor", analyst: "Analyst", executor: "Executor", risk: "Risk" };
   const COLOR = { scanner: "cyan", auditor: "", analyst: "yellow", executor: "green", risk: "pink" };
@@ -37,7 +37,7 @@
   } catch (e) {} }
   const BASE = FIXTURE ? "/" + FIXTURE.replace(/[^\w-]/g, "") + "/" : (DP ? SUPA + encodeURIComponent(DP) + "/" : null);
 
-  const S = { tf: {}, chartOff: {}, chartSlot: 9, state: null, chart: null, account: null, activity: [], coin: {}, audit: {}, decisions: {},
+  const S = { tf: {}, chartOff: {}, chartSlot: 9, state: null, chart: null, account: null, activity: [], coin: {}, audit: {}, scan: {}, decisions: {},
               reports: null, report: {}, missing: {}, err: false, lastGood: null, next: 0, range: "LIVE", search: "", showSearch: false,
               tpDraft: {}, tpPart: {}, slDraft: {}, slPart: {}, lineDraft: {}, book: null };
   const view = document.getElementById("view"), offline = document.getElementById("offline");
@@ -737,6 +737,8 @@
     if (r.name === "agents") for (const a of AGENTS) if (ch(`decisions/${a}.json`) || !S.decisions[a]) await getOpt(`decisions/${a}.json`, S.decisions, a);
     if (r.name === "report" && r.arg && /^\d{4}-\d{2}-\d{2}$/.test(r.arg) && (ch(`reports/${r.arg}.json`) || !S.report[r.arg]))
       await getOpt(`reports/${r.arg}.json`, S.report, r.arg);
+    if (r.name === "scan" && r.arg && (ch(`scan/${r.arg}.json`) || !S.scan[r.arg]))
+      await getOpt(`scan/${r.arg}.json`, S.scan, r.arg);
   }
   function pollDelayS() { return document.hidden ? POLL_HIDDEN_S : POLL_VISIBLE_S; }
   let pollTimer = null, pollInFlight = false, pollAgain = false;
@@ -1026,6 +1028,98 @@
       <div class="mixfoot"><span>${c.wins || 0}W · ${c.losses || 0}L</span><span class="${(c.pnl_usd || 0) >= 0 ? "green" : "red"}">${esc(pnl)}</span></div>`;
     return href ? `<a class="mixcard glass" href="${href}">${inner}</a>` : `<div class="mixcard glass">${inner}</div>`;
   }
+
+  const SOL_CA = /^[1-9A-HJ-NP-Za-km-z]{32,44}$/;
+  const EVM_CA = /^0x[0-9a-fA-F]{40}$/;
+  function parseCa(raw) {
+    const s = (raw || "").trim();
+    if (!s) return null;
+    const m = s.match(/[1-9A-HJ-NP-Za-km-z]{32,44}/) || s.match(/0x[0-9a-fA-F]{40}/);
+    if (!m) return null;
+    const ca = m[0];
+    return (SOL_CA.test(ca) || EVM_CA.test(ca)) ? ca : null;
+  }
+  function bindScanForm() {
+    const form = document.getElementById("scanform");
+    if (!form) return;
+    form.onsubmit = e => {
+      e.preventDefault();
+      const ca = parseCa((document.getElementById("scanin") || {}).value);
+      if (!ca) { toast("Paste a mint or contract address"); return; }
+      go("#/scan/" + encodeURIComponent(ca));
+    };
+  }
+  function scanScreen(arg) {
+    const mint = arg || "";
+    const form = `<div class="scanbox glass" style="margin:16px var(--g,16px)">
+        <div class="sh" style="margin:0 0 8px;padding:0"><h2>Scan a coin</h2></div>
+        <form id="scanform" class="scanform" action="#/scan" method="get">
+          <input id="scanin" name="ca" type="text" inputmode="text" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="Paste mint or CA" value="${esc(mint)}">
+          <button type="submit" class="mbtn" id="scanbtn">Scan</button>
+        </form>
+        <div class="s sec" style="margin-top:8px">Full audit + score. Never buys.</div>
+      </div>`;
+    if (!mint) {
+      return { html: backbar("Scan", "#/home") + form, after() { bindScanForm(); const i = document.getElementById("scanin"); if (i) i.focus(); } };
+    }
+    const a = S.scan[mint];
+    const missing = S.missing[`scan/${mint}.json`];
+    const link = a && safeUrl(a.link);
+    const start = tgLink("scan_" + mint);
+    if (!a && missing) {
+      const html = backbar("Scan", "#/home") + form +
+        `<div class="card gut" style="margin-top:16px"><div class="vt">Waiting for the desk</div>
+         <div class="vs">Paste is on the desk. Results appear here once the scan file is published. This never buys.</div>
+         ${start ? `<a class="cta" href="${esc(start)}" target="_blank" rel="noopener">Scan now in Telegram</a>` : ""}
+         ${link ? `<a class="cta" style="margin-top:8px" href="${esc(link)}" target="_blank" rel="noopener">Buy on FOMO</a>` : ""}
+        </div>`;
+      return { html, after() { bindScanForm(); startScanPoll(mint); } };
+    }
+    if (!a) {
+      return { html: backbar("Scan", "#/home") + form + `<div class="gut">${sk(34, "60%")}${sk(180, null, "margin-top:12px")}</div>`,
+        after() { bindScanForm(); startScanPoll(mint); } };
+    }
+    const mark = { true: "✓", false: "✗", null: "·" };
+    const layers = a.layers || [];
+    const rows = layers.map(l => {
+      const ok = l.pass;
+      const cls = ok === true ? "" : (ok === false ? "red" : "nc");
+      return `<div class="lrow"><span>${esc(String(l.n))} · ${esc(l.name || "")}</span><span class="lv ${cls}">${esc(mark[ok] + " " + (l.value || "—"))}</span></div>`;
+    }).join("");
+    const n = layers.length, reds = layers.filter(l => l.pass === false).length;
+    const head = a.passed
+      ? `<div class="vt green">Auditor ${n - reds}/${n} passed</div>`
+      : `<div class="vt red">Auditor red: ${esc(a.reason || "red")}</div>`;
+    const sc = a.score || {};
+    let scoreLine = "Score unavailable";
+    if (sc.score != null) {
+      scoreLine = "Score " + sc.score + " · " + (sc.passed ? "pass" : "fail") + (sc.failed && sc.failed.length ? " · " + sc.failed.join(", ") : "");
+    } else if (sc.failed && sc.failed.length) {
+      scoreLine = "Score unavailable · " + sc.failed.join(", ");
+    }
+    const html = backbar("Scan", "#/home") + form +
+      `<div class="coinhead"><div class="cname">${logo(a.name || mint, null, 36)}<span>${esc(a.name || shortAddr(mint))}</span></div></div>
+       <div class="verdict">${head}<div class="vs">${esc(scoreLine)}</div>
+         <div class="s sec">not bought, not sized, not on the desk</div></div>
+       <div class="list" id="lrows">${rows}</div>
+       <div class="spacer"></div>
+       ${link ? `<a class="cta" href="${esc(link)}" target="_blank" rel="noopener">Buy on FOMO</a>` : ""}
+       ${link ? `<a class="cta" style="margin-top:8px;opacity:.9" href="${esc(link)}" target="_blank" rel="noopener">Add on FOMO</a>` : ""}`;
+    return { html, after() { bindScanForm(); } };
+  }
+  let scanPollTimer = null;
+  function startScanPoll(mint) {
+    clearTimeout(scanPollTimer);
+    let n = 0;
+    const tick = async () => {
+      if (route().name !== "scan" || decodeURIComponent(route().arg || "") !== mint) return;
+      try { await getOpt(`scan/${mint}.json`, S.scan, mint); render(); } catch (e) {}
+      if (S.scan[mint] || n++ > 40) return;
+      scanPollTimer = setTimeout(tick, 2000);
+    };
+    scanPollTimer = setTimeout(tick, 1500);
+  }
+
   function home() {
 
     if (!S.state) return loadingHome();
@@ -1060,6 +1154,14 @@
        ${bookseg}
        ${heroBody}${(!missesOn && mixOn) ? mixBoard : ""}
       <div class="achips">${st.agents.map(a => `<a class="achip" href="#/agents"><i class="live ${esc(a.paused ? "paused" : a.status)}"></i>${TITLE[a.name]}</a>`).join("")}</div></section>
+      <div class="scanbox glass">
+        <div class="sh" style="margin:0 0 8px;padding:0"><h2>Scan a coin</h2></div>
+        <form id="scanform" class="scanform" action="#/scan" method="get">
+          <input id="scanin" name="ca" type="text" inputmode="text" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="Paste mint or CA" value="">
+          <button type="submit" class="mbtn" id="scanbtn">Scan</button>
+        </form>
+        <div class="s sec" style="margin-top:8px">Full audit + score. Never buys.</div>
+      </div>
       ${missesOn ? "" : (book === "LIVE" ? `<div class="sh"><h2>Holdings</h2><span class="ter sm">${((bk.wallet && bk.wallet.holdings) || []).length || ""}</span></div>
       <div class="list glass">${((bk.wallet && bk.wallet.holdings) || []).length ? (bk.wallet.holdings).map(holdRow).join("") : `<div class="empty">${bk.wallet && bk.wallet.stale ? "Wallet sync stale" : "No holdings over $1"}</div>`}</div>`
         : `<div class="sh"><h2>Open positions</h2><span class="ter sm">${openPositions().length || ""}</span></div>
@@ -1073,6 +1175,7 @@
       <div class="sh"><h2>Activity</h2><a href="#/activity">See all</a></div>
       <div class="list glass">${rows.length ? rows.map(actRow).join("") : '<div class="empty">Nothing yet tonight</div>'}</div>`;
     return { html, after() {
+      bindScanForm();
       if (odo.roll) runOdometer();
       const line = document.getElementById("line");
       if (line && window.DeskChart) {
@@ -2875,16 +2978,17 @@
   function render() {
     tickOffline();
     if (document.querySelector("canvas.inspecting, canvas.linedrag, canvas.holding")) return;
-    if (document.activeElement && ["tpin", "slin", "bottpin", "botslin"].includes(document.activeElement.id)) return;
+    if (document.activeElement && ["tpin", "slin", "bottpin", "botslin", "scanin"].includes(document.activeElement.id)) return;
     const r = route();
     view.classList.toggle("bottab", r.name === "bot");
-    document.querySelectorAll(".tab").forEach(t => t.classList.toggle("on", t.dataset.tab === r.name || ((r.name === "coin" || r.name === "audit") && t.dataset.tab === "home") || (r.name === "report" && t.dataset.tab === "activity")));
+    document.querySelectorAll(".tab").forEach(t => t.classList.toggle("on", t.dataset.tab === r.name || ((r.name === "coin" || r.name === "audit" || r.name === "scan") && t.dataset.tab === "home") || (r.name === "report" && t.dataset.tab === "activity")));
     const tabs = [...document.querySelectorAll(".tab")], on = tabs.findIndex(t => t.classList.contains("on")), ind = document.getElementById("tabind");
     if (ind && on >= 0) ind.style.transform = `translateX(${on * 100}%)`;
     if (!BASE) { if (!document.getElementById("gb")) { view.innerHTML = gate(); bindGate(); } document.getElementById("tabbar").hidden = true; return; }
     const out = r.name === "bot" && r.arg ? botPosScreen(decodeURIComponent(r.arg)) : r.name === "bot" ? botTab()
       : r.name === "desk" ? deskTab() : r.name === "agents" ? agentsTab() : r.name === "activity" ? activityTab() : r.name === "account" ? accountTab()
       : r.name === "coin" && r.arg ? coinScreen(decodeURIComponent(r.arg)) : r.name === "audit" ? auditScreen(r.arg && decodeURIComponent(r.arg))
+      : r.name === "scan" ? scanScreen(r.arg && decodeURIComponent(r.arg))
       : r.name === "report" && r.arg ? reportScreen(decodeURIComponent(r.arg)) : home();
     const o = typeof out === "string" ? { html: out } : out;
     const ae = document.activeElement && document.activeElement.id === "q";
@@ -2939,7 +3043,7 @@
   if ("serviceWorker" in navigator && !LOCAL) {
     let swReload = false;
     navigator.serviceWorker.addEventListener("controllerchange", () => { if (swReload) return; swReload = true; location.reload(); });
-    navigator.serviceWorker.register("sw.js?v=51", { updateViaCache: "none" }).then(reg => { try { reg.update(); } catch (e) {} }).catch(() => {});
+    navigator.serviceWorker.register("sw.js?v=52", { updateViaCache: "none" }).then(reg => { try { reg.update(); } catch (e) {} }).catch(() => {});
   }
   render();
   if (BASE) poll();
