@@ -7,14 +7,22 @@
   const QS = new URLSearchParams(location.search);
   const FIXTURE = LOCAL ? QS.get("fixture") : null;          // local screenshots only
   const POLL_VISIBLE_S = 2, POLL_HIDDEN_S = 15, POLL_S = POLL_VISIBLE_S, MAX_BACKOFF = 60;
-  const APP_VERSION = "v52";   // bump with every app release (also index.html ?v= and sw.js CACHE)
+  const APP_VERSION = "v53";   // bump with every app release (also index.html ?v= and sw.js CACHE)
   const AGENTS = ["scanner", "auditor", "analyst", "executor", "risk"];
   const TITLE = { scanner: "Scanner", auditor: "Auditor", analyst: "Analyst", executor: "Executor", risk: "Risk" };
   const COLOR = { scanner: "cyan", auditor: "", analyst: "yellow", executor: "green", risk: "pink" };
   const RM = () => matchMedia("(prefers-reduced-motion: reduce)").matches;
 
   // ---------- data path: kept in the URL fragment (never sent to the server) + localStorage ----------
-  const hashD = () => { const m = location.hash.match(/[#?&]d=([^&]+)/); return m ? decodeURIComponent(m[1]).trim() : null; };
+  const hashParam = (key) => { const m = location.hash.match(new RegExp("[#?&]" + key + "=([^&]+)")); return m ? decodeURIComponent(m[1]).trim() : null; };
+  const hashD = () => hashParam("d");
+  const t0 = hashParam("t");
+  if (t0) {
+    try { localStorage.setItem("desk.t", t0); } catch (e) {}
+    // Strip t= so the token is not kept in the address bar, history, or the Home Screen start_url.
+    const stripped = location.hash.replace(/([#?&])t=[^&]*&?/, "$1").replace(/[?&]$/, "").replace(/#$/, "#/home");
+    history.replaceState({ desk: 1, deskIdx: 0 }, "", location.pathname + location.search + stripped);
+  }
   const dp0 = hashD();
   if (dp0) localStorage.setItem("desk.d", dp0);
   if (location.hash.startsWith("#d=") && dp0) history.replaceState({ desk: 1, deskIdx: 0 }, "", location.pathname + location.search + "#/home?d=" + encodeURIComponent(dp0));
@@ -1057,7 +1065,7 @@
           <input id="scanin" name="ca" type="text" inputmode="text" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="Paste mint or CA" value="${esc(mint)}">
           <button type="submit" class="mbtn" id="scanbtn">Scan</button>
         </form>
-        <div class="s sec" style="margin-top:8px">Full audit + score. Never buys.</div>
+        <div class="s sec" style="margin-top:8px">Full audit + score. Auto-buys if green (manual pick).</div>
       </div>`;
     if (!mint) {
       return { html: backbar("Scan", "#/home") + form, after() { bindScanForm(); const i = document.getElementById("scanin"); if (i) i.focus(); } };
@@ -1069,7 +1077,7 @@
     if (!a && missing) {
       const html = backbar("Scan", "#/home") + form +
         `<div class="card gut" style="margin-top:16px"><div class="vt">Waiting for the desk</div>
-         <div class="vs">Paste is on the desk. Results appear here once the scan file is published. This never buys.</div>
+         <div class="vs">Scanning on the desk. If every hard check passes, the auto bot buys it (manual pick).</div>
          ${start ? `<a class="cta" href="${esc(start)}" target="_blank" rel="noopener">Scan now in Telegram</a>` : ""}
          ${link ? `<a class="cta" style="margin-top:8px" href="${esc(link)}" target="_blank" rel="noopener">Buy on FOMO</a>` : ""}
         </div>`;
@@ -1097,24 +1105,69 @@
     } else if (sc.failed && sc.failed.length) {
       scoreLine = "Score unavailable · " + sc.failed.join(", ");
     }
+    const buy = a.buy || {};
+    const buyText = buy.line || (buy.status === "pending" ? "Buy pending…" : (buy.ok ? "Bought" : ("Not bought: " + (buy.reason || (S.scanErr && S.scanErr[mint]) || "waiting"))));
     const html = backbar("Scan", "#/home") + form +
       `<div class="coinhead"><div class="cname">${logo(a.name || mint, null, 36)}<span>${esc(a.name || shortAddr(mint))}</span></div></div>
        <div class="verdict">${head}<div class="vs">${esc(scoreLine)}</div>
-         <div class="s sec">not bought, not sized, not on the desk</div></div>
+         <div class="s sec">${esc(buyText)}</div></div>
        <div class="list" id="lrows">${rows}</div>
        <div class="spacer"></div>
        ${link ? `<a class="cta" href="${esc(link)}" target="_blank" rel="noopener">Buy on FOMO</a>` : ""}
        ${link ? `<a class="cta" style="margin-top:8px;opacity:.9" href="${esc(link)}" target="_blank" rel="noopener">Add on FOMO</a>` : ""}`;
-    return { html, after() { bindScanForm(); } };
+    return { html, after() { bindScanForm(); startScanPoll(mint); } };
+  }
+  async function scanAuthHex(tok) {
+    const enc = new TextEncoder();
+    const key = await crypto.subtle.importKey("raw", enc.encode(tok), { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
+    const sig = await crypto.subtle.sign("HMAC", key, enc.encode("scan-api"));
+    return Array.from(new Uint8Array(sig)).map(b => b.toString(16).padStart(2, "0")).join("");
+  }
+  const requestedScan = {};
+  async function requestScan(mint) {
+    if (!mint || requestedScan[mint] === "ok" || requestedScan[mint] === "ing") return;
+    requestedScan[mint] = "ing";
+    let tok = null;
+    try { tok = localStorage.getItem("desk.t"); } catch (e) { tok = null; }
+    if (!tok || !BASE) {
+      requestedScan[mint] = 0;
+      S.scanErr = S.scanErr || {};
+      S.scanErr[mint] = "Open the latest Status link from Telegram so this app can buy.";
+      return;
+    }
+    try {
+      const hex = await scanAuthHex(tok);
+      const r = await fetch(BASE + "_auth/" + hex + ".json", { cache: "no-store" });
+      if (!r.ok) throw new Error("auth");
+      const j = await r.json();
+      if (!j || !j.put) throw new Error("auth");
+      const put = await fetch(j.put, { method: "PUT", headers: { "Content-Type": "application/json", "x-upsert": "true" },
+        body: JSON.stringify({ mint: mint, ts: Date.now() }) });
+      if (!put.ok) throw new Error("put");
+      requestedScan[mint] = "ok";
+      if (S.scanErr) delete S.scanErr[mint];
+    } catch (e) {
+      requestedScan[mint] = 0;
+      S.scanErr = S.scanErr || {};
+      S.scanErr[mint] = "Could not reach the desk buy path. You can Scan now in Telegram.";
+    }
+  }
+  function scanDone(a) {
+    if (!a) return false;
+    const b = a.buy;
+    if (!b || b.status === "pending") return false;
+    return b.ok === true || b.ok === false || !!b.line || !!b.reason;
   }
   let scanPollTimer = null;
   function startScanPoll(mint) {
     clearTimeout(scanPollTimer);
     let n = 0;
+    requestScan(mint);
     const tick = async () => {
       if (route().name !== "scan" || decodeURIComponent(route().arg || "") !== mint) return;
+      if (requestedScan[mint] !== "ok") await requestScan(mint);
       try { await getOpt(`scan/${mint}.json`, S.scan, mint); render(); } catch (e) {}
-      if (S.scan[mint] || n++ > 40) return;
+      if (scanDone(S.scan[mint]) || n++ > 60) return;
       scanPollTimer = setTimeout(tick, 2000);
     };
     scanPollTimer = setTimeout(tick, 1500);
@@ -1160,7 +1213,7 @@
           <input id="scanin" name="ca" type="text" inputmode="text" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="Paste mint or CA" value="">
           <button type="submit" class="mbtn" id="scanbtn">Scan</button>
         </form>
-        <div class="s sec" style="margin-top:8px">Full audit + score. Never buys.</div>
+        <div class="s sec" style="margin-top:8px">Full audit + score. Auto-buys if green (manual pick).</div>
       </div>
       ${missesOn ? "" : (book === "LIVE" ? `<div class="sh"><h2>Holdings</h2><span class="ter sm">${((bk.wallet && bk.wallet.holdings) || []).length || ""}</span></div>
       <div class="list glass">${((bk.wallet && bk.wallet.holdings) || []).length ? (bk.wallet.holdings).map(holdRow).join("") : `<div class="empty">${bk.wallet && bk.wallet.stale ? "Wallet sync stale" : "No holdings over $1"}</div>`}</div>`
@@ -3043,7 +3096,7 @@
   if ("serviceWorker" in navigator && !LOCAL) {
     let swReload = false;
     navigator.serviceWorker.addEventListener("controllerchange", () => { if (swReload) return; swReload = true; location.reload(); });
-    navigator.serviceWorker.register("sw.js?v=52", { updateViaCache: "none" }).then(reg => { try { reg.update(); } catch (e) {} }).catch(() => {});
+    navigator.serviceWorker.register("sw.js?v=53", { updateViaCache: "none" }).then(reg => { try { reg.update(); } catch (e) {} }).catch(() => {});
   }
   render();
   if (BASE) poll();
