@@ -1292,3 +1292,7 @@ html[data-theme="daylight"] .cd.dn .dn1,html[data-theme="daylight"] .cd.dn .dv{c
 .scanform{display:flex;gap:8px;align-items:center}
 .scanform input{flex:1;height:44px;border-radius:12px;border:0;background:var(--bg, #0b0d10);color:var(--text);padding:0 14px;font:inherit;font-size:16px}
 .scanform .mbtn{height:44px;padding:0 16px;flex:0 0 auto;white-space:nowrap}
+.scanform #scanpct{flex:0 0 74px;width:74px;padding:0 10px;text-align:center}
+@media (max-width:360px){.scanform #scanpct{flex-basis:62px;width:62px}}
+.scanform input{min-width:0}
+.scansize{margin-top:6px}

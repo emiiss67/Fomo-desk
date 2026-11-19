@@ -6,8 +6,8 @@
   const LOCAL = ["localhost", "127.0.0.1"].includes(location.hostname);
   const QS = new URLSearchParams(location.search);
   const FIXTURE = LOCAL ? QS.get("fixture") : null;          // local screenshots only
-  const POLL_VISIBLE_S = 2, POLL_HIDDEN_S = 15, POLL_S = POLL_VISIBLE_S, MAX_BACKOFF = 60;
-  const APP_VERSION = "v53";   // bump with every app release (also index.html ?v= and sw.js CACHE)
+  const POLL_VISIBLE_S = 1, POLL_HIDDEN_S = 15, POLL_S = POLL_VISIBLE_S, MAX_BACKOFF = 60;
+  const APP_VERSION = "v54";   // bump with every app release (also index.html ?v= and sw.js CACHE)
   const AGENTS = ["scanner", "auditor", "analyst", "executor", "risk"];
   const TITLE = { scanner: "Scanner", auditor: "Auditor", analyst: "Analyst", executor: "Executor", risk: "Risk" };
   const COLOR = { scanner: "cyan", auditor: "", analyst: "yellow", executor: "green", risk: "pink" };
@@ -1047,6 +1047,38 @@
     const ca = m[0];
     return (SOL_CA.test(ca) || EVM_CA.test(ca)) ? ca : null;
   }
+  // Buy size for a scan, as % of balance (1-100). Empty = the bot's normal size (executor.stack_pct).
+  function parsePct(raw) {
+    const s = String(raw == null ? "" : raw).trim().replace(/\s+/g, "").replace(/%$/, "").replace(",", ".");
+    if (!s) return { pct: null };
+    if (!/^\d+(\.\d+)?$/.test(s)) return { err: "Size must be a number like 10 or 10%" };
+    const v = Math.round(+s * 10) / 10;
+    if (!(v >= 1 && v <= 100)) return { err: "Size must be between 1% and 100% of balance" };
+    return { pct: v };
+  }
+  const pctTxt = v => (+v).toLocaleString("en-US", { maximumFractionDigits: 1 }) + "%";
+  const pctPayload = v => { const w = Math.trunc(v), d = Math.round((v - w) * 10); return w + (d ? "p" + d : ""); };
+  function scanPctFor(mint) {
+    S.scanPct = S.scanPct || {};
+    if (S.scanPct[mint] === undefined) { try { const v = sessionStorage.getItem("desk.scanpct." + mint); S.scanPct[mint] = v ? +v : null; } catch (e) { S.scanPct[mint] = null; } }
+    return S.scanPct[mint];
+  }
+  function setScanPct(mint, v) {
+    S.scanPct = S.scanPct || {}; S.scanPct[mint] = v;
+    try { if (v == null) sessionStorage.removeItem("desk.scanpct." + mint); else sessionStorage.setItem("desk.scanpct." + mint, String(v)); } catch (e) {}
+  }
+  function scanSizeLine(mint) {
+    const v = scanPctFor(mint);
+    return `<div class="s scansize ${v != null ? "green" : "sec"}">Buy size: ${v != null ? esc(pctTxt(v)) + " of balance" : "bot default"}</div>`;
+  }
+  function scanFormHtml(mint) {
+    const pv = mint ? scanPctFor(mint) : null;
+    return `<form id="scanform" class="scanform" action="#/scan" method="get">
+          <input id="scanin" name="ca" type="text" inputmode="text" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="Paste mint or CA" value="${esc(mint || "")}">
+          <input id="scanpct" name="pct" type="text" inputmode="decimal" autocomplete="off" maxlength="6" placeholder="% bal" aria-label="Buy size, % of balance" value="${pv == null ? "" : esc(String(pv))}">
+          <button type="submit" class="mbtn" id="scanbtn">Scan</button>
+        </form>`;
+  }
   function bindScanForm() {
     const form = document.getElementById("scanform");
     if (!form) return;
@@ -1054,18 +1086,21 @@
       e.preventDefault();
       const ca = parseCa((document.getElementById("scanin") || {}).value);
       if (!ca) { toast("Paste a mint or contract address"); return; }
-      go("#/scan/" + encodeURIComponent(ca));
+      const pp = parsePct((document.getElementById("scanpct") || {}).value);
+      if (pp.err) { toast(pp.err); return; }
+      setScanPct(ca, pp.pct);
+      const target = "#/scan/" + encodeURIComponent(ca);
+      if (route().name === "scan" && decodeURIComponent(route().arg || "") === ca) { render(); startScanPoll(ca); }
+      else go(target);
     };
   }
   function scanScreen(arg) {
     const mint = arg || "";
     const form = `<div class="scanbox glass" style="margin:16px var(--g,16px)">
         <div class="sh" style="margin:0 0 8px;padding:0"><h2>Scan a coin</h2></div>
-        <form id="scanform" class="scanform" action="#/scan" method="get">
-          <input id="scanin" name="ca" type="text" inputmode="text" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="Paste mint or CA" value="${esc(mint)}">
-          <button type="submit" class="mbtn" id="scanbtn">Scan</button>
-        </form>
-        <div class="s sec" style="margin-top:8px">Full audit + score. Auto-buys if green (manual pick).</div>
+        ${scanFormHtml(mint)}
+        <div class="s sec" style="margin-top:8px">Full audit + score. Auto-buys if green (manual pick). Optional size: % of balance (1-100).</div>
+        ${mint ? scanSizeLine(mint) : ""}
       </div>`;
     if (!mint) {
       return { html: backbar("Scan", "#/home") + form, after() { bindScanForm(); const i = document.getElementById("scanin"); if (i) i.focus(); } };
@@ -1073,7 +1108,8 @@
     const a = S.scan[mint];
     const missing = S.missing[`scan/${mint}.json`];
     const link = a && safeUrl(a.link);
-    const start = tgLink("scan_" + mint);
+    const sizePct = scanPctFor(mint);
+    const start = tgLink("scan_" + mint + (sizePct != null ? "_" + pctPayload(sizePct) : "")) || tgLink("scan_" + mint);
     if (!a && missing) {
       const html = backbar("Scan", "#/home") + form +
         `<div class="card gut" style="margin-top:16px"><div class="vt">Waiting for the desk</div>
@@ -1125,12 +1161,14 @@
   }
   const requestedScan = {};
   async function requestScan(mint) {
-    if (!mint || requestedScan[mint] === "ok" || requestedScan[mint] === "ing") return;
-    requestedScan[mint] = "ing";
+    const pct = scanPctFor(mint);
+    const rk = mint + "|" + (pct == null ? "" : pct);
+    if (!mint || requestedScan[rk] === "ok" || requestedScan[rk] === "ing") return;
+    requestedScan[rk] = "ing";
     let tok = null;
     try { tok = localStorage.getItem("desk.t"); } catch (e) { tok = null; }
     if (!tok || !BASE) {
-      requestedScan[mint] = 0;
+      requestedScan[rk] = 0;
       S.scanErr = S.scanErr || {};
       S.scanErr[mint] = "Open the latest Status link from Telegram so this app can buy.";
       return;
@@ -1142,12 +1180,12 @@
       const j = await r.json();
       if (!j || !j.put) throw new Error("auth");
       const put = await fetch(j.put, { method: "PUT", headers: { "Content-Type": "application/json", "x-upsert": "true" },
-        body: JSON.stringify({ mint: mint, ts: Date.now() }) });
+        body: JSON.stringify(pct == null ? { mint: mint, ts: Date.now() } : { mint: mint, ts: Date.now(), pct_of_balance: pct }) });
       if (!put.ok) throw new Error("put");
-      requestedScan[mint] = "ok";
+      requestedScan[rk] = "ok";
       if (S.scanErr) delete S.scanErr[mint];
     } catch (e) {
-      requestedScan[mint] = 0;
+      requestedScan[rk] = 0;
       S.scanErr = S.scanErr || {};
       S.scanErr[mint] = "Could not reach the desk buy path. You can Scan now in Telegram.";
     }
@@ -1165,7 +1203,7 @@
     requestScan(mint);
     const tick = async () => {
       if (route().name !== "scan" || decodeURIComponent(route().arg || "") !== mint) return;
-      if (requestedScan[mint] !== "ok") await requestScan(mint);
+      await requestScan(mint);
       try { await getOpt(`scan/${mint}.json`, S.scan, mint); render(); } catch (e) {}
       if (scanDone(S.scan[mint]) || n++ > 60) return;
       scanPollTimer = setTimeout(tick, 2000);
@@ -1209,11 +1247,8 @@
       <div class="achips">${st.agents.map(a => `<a class="achip" href="#/agents"><i class="live ${esc(a.paused ? "paused" : a.status)}"></i>${TITLE[a.name]}</a>`).join("")}</div></section>
       <div class="scanbox glass">
         <div class="sh" style="margin:0 0 8px;padding:0"><h2>Scan a coin</h2></div>
-        <form id="scanform" class="scanform" action="#/scan" method="get">
-          <input id="scanin" name="ca" type="text" inputmode="text" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="Paste mint or CA" value="">
-          <button type="submit" class="mbtn" id="scanbtn">Scan</button>
-        </form>
-        <div class="s sec" style="margin-top:8px">Full audit + score. Auto-buys if green (manual pick).</div>
+        ${scanFormHtml("")}
+        <div class="s sec" style="margin-top:8px">Full audit + score. Auto-buys if green (manual pick). Optional size: % of balance (1-100).</div>
       </div>
       ${missesOn ? "" : (book === "LIVE" ? `<div class="sh"><h2>Holdings</h2><span class="ter sm">${((bk.wallet && bk.wallet.holdings) || []).length || ""}</span></div>
       <div class="list glass">${((bk.wallet && bk.wallet.holdings) || []).length ? (bk.wallet.holdings).map(holdRow).join("") : `<div class="empty">${bk.wallet && bk.wallet.stale ? "Wallet sync stale" : "No holdings over $1"}</div>`}</div>`
@@ -1616,10 +1651,10 @@
   function dsCdn(mint) {
     return mint ? ("https://dd.dexscreener.com/ds-data/tokens/solana/" + encodeURIComponent(mint) + ".png") : null;
   }
-  function dsFetch(mint) {
+  function dsFetch(mint, maxAgeMs) {
     if (!mint) return Promise.resolve(null);
     const hit = DS_INFO[mint];
-    if (hit && !hit.failed && Date.now() - hit.at < 30000) return Promise.resolve(hit);
+    if (hit && !hit.failed && Date.now() - hit.at < (maxAgeMs != null ? maxAgeMs : 30000)) return Promise.resolve(hit);
     const url = "https://api.dexscreener.com/latest/dex/tokens/" + encodeURIComponent(mint);
     return fetch(url, { headers: { Accept: "application/json" }, referrerPolicy: "no-referrer", cache: "no-store" })
       .then(r => r.status === 200 ? r.json() : null)
@@ -1668,29 +1703,61 @@
   function mergeDeskLive(mint, desk, step) {
     return mergeCandles(desk, ticksToCandles(mint, step), step || 60);
   }
+  // Live prices: 1 request per second while the page is visible (DexScreener allows 300/min), one batched call for up
+  // to 30 mints. Only re-renders when a price actually moved, and never while the user is dragging or inspecting a chart.
+  const LIVE_VISIBLE_MS = 1000, LIVE_HIDDEN_MS = 30000;
   let liveTimer = null, liveBusy = false;
   function scheduleLive(ms) {
     clearTimeout(liveTimer);
-    liveTimer = setTimeout(liveTick, ms != null ? ms : (document.hidden ? 30000 : 12000));
+    liveTimer = setTimeout(liveTick, ms != null ? ms : (document.hidden ? LIVE_HIDDEN_MS : LIVE_VISIBLE_MS));
+  }
+  function liveMints() {
+    const m = routeMint();
+    if (m) return [m];
+    const r = route(), out = [];
+    const add = x => { if (x && SOL_CA.test(x) && out.indexOf(x) < 0 && out.length < 30) out.push(x); };
+    if (r.name === "home") { try { openPositions().forEach(o => add(o.row && o.row.mint)); } catch (e) {} }
+    if (r.name === "bot" && S.bot) (S.bot.book || S.bot.positions || []).forEach(p => { if (p && p.status !== "closed" && !p.closed_at) add(p.mint); });
+    return out;
+  }
+  function dsFetchMany(mints) {
+    if (mints.length === 1) return dsFetch(mints[0], LIVE_VISIBLE_MS - 100).then(i => { const o = {}; if (i && i.price != null) o[mints[0]] = i.price; return o; });
+    const url = "https://api.dexscreener.com/latest/dex/tokens/" + mints.map(encodeURIComponent).join(",");
+    return fetch(url, { headers: { Accept: "application/json" }, referrerPolicy: "no-referrer", cache: "no-store" })
+      .then(r => r.status === 200 ? r.json() : null)
+      .then(j => {
+        const best = {};
+        ((j && j.pairs) || []).forEach(p => {
+          const m = p && p.baseToken && p.baseToken.address, liq = +((p.liquidity || {}).usd) || 0, px = p && p.priceUsd != null ? +p.priceUsd : NaN;
+          if (!m || mints.indexOf(m) < 0 || !isFinite(px) || px <= 0) return;
+          if (!best[m] || liq > best[m].liq) best[m] = { liq, px, pair: p.pairAddress, mcap: p.marketCap != null ? +p.marketCap : (p.fdv != null ? +p.fdv : null) };
+        });
+        const out = {};
+        Object.keys(best).forEach(m => {
+          const b = best[m], prev = DS_INFO[m] || {};
+          DS_INFO[m] = Object.assign({}, prev, { at: Date.now(), price: b.px, liq: b.liq, pair: b.pair || prev.pair, mcap: isFinite(b.mcap) ? b.mcap : prev.mcap, failed: false });
+          pushLiveTick(m, b.px); out[m] = b.px;
+        });
+        return out;
+      });
   }
   function liveTick() {
-    if (liveBusy) { scheduleLive(2000); return; }
-    const mint = routeMint();
-    if (!mint) { scheduleLive(); return; }
+    if (liveBusy) { scheduleLive(); return; }
+    if (document.hidden) { scheduleLive(); return; }
+    const mints = liveMints();
+    if (!mints.length) { scheduleLive(); return; }
     liveBusy = true;
-    const prev = DS_INFO[mint] && DS_INFO[mint].price;
-    dsFetch(mint).then(info => {
-      const px = info && info.price;
-      if (px != null) pushLiveTick(mint, px);
-      const r = route();
-      const onChart = (r.name === "coin" && decodeURIComponent(r.arg || "") === mint)
-        || (r.name === "bot" && routeMint() === mint);
-      if (onChart && px != null && !document.querySelector("canvas.inspecting, canvas.linedrag, canvas.holding"))
-        render();
+    const prev = {}; mints.forEach(m => { prev[m] = DS_INFO[m] && DS_INFO[m].price; });
+    dsFetchMany(mints).then(px => {
+      Object.keys(px).forEach(m => pushLiveTick(m, px[m]));
+      const moved = Object.keys(px).some(m => px[m] !== prev[m]);
+      if (!moved) return;
+      if (document.querySelector("canvas.inspecting, canvas.linedrag, canvas.holding")) return;
+      render();
     }).catch(() => {}).finally(() => { liveBusy = false; scheduleLive(); });
   }
   document.addEventListener("visibilitychange", () => { if (!document.hidden) { scheduleLive(0); } });
-  scheduleLive(4000);
+  scheduleLive(1500);
 
   function routeMint() {
     const r = route();
@@ -2612,6 +2679,8 @@
         ${kv2("Analyst score ≥", esc(st.min_score))}
         ${kv2("Score weights", `alive ${esc(w.alive)} · organic ${esc(w.organic)} · flush ${esc(w.flush)} · chase ${esc(w.chase)}`)}
         ${kv2("Stop · trail", `-${esc(st.stop_pct)}% · ${esc(st.trail_pct)}% from +${esc(st.trail_start_pct)}%`)}
+        ${st.tp_multiple != null ? kv2("Take profit · runner", `sell ${esc(Math.round((st.tp_fraction != null ? st.tp_fraction : 0.5) * 100))}% at ${esc(st.tp_multiple)}x · trail rest ${esc(st.runner_trail_pct != null ? st.runner_trail_pct : st.trail_pct)}% · all out at ${esc(st.moon_multiple != null ? st.moon_multiple : 10)}x`) : ""}
+        ${st.exhaust_enabled != null ? kv2("Momentum exit", st.exhaust_enabled ? `sell all when buys fade (vol < ${esc(st.exhaust_vol_drop_pct)}% of peak, buy share < ${esc(st.exhaust_buy_ratio_max)}) and price bleeds ${esc(st.exhaust_bleed_pct)}% / ${esc(st.exhaust_lower_highs)} lower highs` : "off") : ""}
         ${kv2("Timeout", esc(st.timeout_h) + "h")}
         ${st.sniper_max_trade_pct != null ? kv2("Snipe", `pullback ${esc(st.snipe_pullback_pct)}% below ${esc(st.snipe_high_window_min)}m high · wait ${esc(st.snipe_max_wait_min)}m · sniper cap ${esc(st.sniper_max_trade_pct)}% · ${esc(st.snipe_grace_min)}m grace, rug -${esc(st.snipe_rug_pct)}% / liq -${esc(st.snipe_liq_pull_pct)}%`) : ""}
       </div></div>
@@ -3031,7 +3100,7 @@
   function render() {
     tickOffline();
     if (document.querySelector("canvas.inspecting, canvas.linedrag, canvas.holding")) return;
-    if (document.activeElement && ["tpin", "slin", "bottpin", "botslin", "scanin"].includes(document.activeElement.id)) return;
+    if (document.activeElement && ["tpin", "slin", "bottpin", "botslin", "scanin", "scanpct"].includes(document.activeElement.id)) return;
     const r = route();
     view.classList.toggle("bottab", r.name === "bot");
     document.querySelectorAll(".tab").forEach(t => t.classList.toggle("on", t.dataset.tab === r.name || ((r.name === "coin" || r.name === "audit" || r.name === "scan") && t.dataset.tab === "home") || (r.name === "report" && t.dataset.tab === "activity")));
@@ -3096,7 +3165,7 @@
   if ("serviceWorker" in navigator && !LOCAL) {
     let swReload = false;
     navigator.serviceWorker.addEventListener("controllerchange", () => { if (swReload) return; swReload = true; location.reload(); });
-    navigator.serviceWorker.register("sw.js?v=53", { updateViaCache: "none" }).then(reg => { try { reg.update(); } catch (e) {} }).catch(() => {});
+    navigator.serviceWorker.register("sw.js?v=54", { updateViaCache: "none" }).then(reg => { try { reg.update(); } catch (e) {} }).catch(() => {});
   }
   render();
   if (BASE) poll();
