@@ -6,12 +6,14 @@
   const LOCAL = ["localhost", "127.0.0.1"].includes(location.hostname);
   const QS = new URLSearchParams(location.search);
   const FIXTURE = LOCAL ? QS.get("fixture") : null;          // local screenshots only
-  const SHOT = !!(FIXTURE && QS.get("shot"));                // one-shot render, no poll loop
+  const SHOT = !!QS.get("shot");                             // one-shot render, no poll loop
   if (LOCAL) { const b = QS.get("book"); if (b) try { window.__seedBook = b; } catch (e) {} }
   const POLL_VISIBLE_S = 1, POLL_HIDDEN_S = 15, POLL_S = POLL_VISIBLE_S, MAX_BACKOFF = 60;
-  const APP_VERSION = "v60";   // bump with every app release (also index.html ?v= and sw.js CACHE)
+  const APP_VERSION = "v61";   // bump with every app release (also index.html ?v= and sw.js CACHE)
   const AGENTS = ["scanner", "auditor", "analyst", "executor", "risk"];
-  const TITLE = { scanner: "Scanner", auditor: "Auditor", analyst: "Analyst", executor: "Executor", risk: "Risk" };
+  const TITLE = { scanner: "Scanner", auditor: "Auditor", analyst: "Analyst", executor: "Executor", risk: "Risk", autobot: "Auto bot" };
+  const agentTitle = a => (a && TITLE[a.name]) || (a && a.name) || "—";
+  const numOrDash = v => (v == null || v === "" || (typeof v === "number" && !isFinite(v))) ? "—" : v;
   const COLOR = { scanner: "cyan", auditor: "", analyst: "yellow", executor: "green", risk: "pink" };
   const RM = () => matchMedia("(prefers-reduced-motion: reduce)").matches;
 
@@ -928,42 +930,45 @@
 
   // ---------- agent cards ----------
   function agentCard(a) {
-    const head = `<div class="ah">${statusDot(a)}<span class="${COLOR[a.name]}">${TITLE[a.name]}</span><span class="ter" style="margin-left:auto;font-weight:400">${a.paused ? "paused" : esc(a.status)}</span></div>`;
+    const head = `<div class="ah">${statusDot(a)}<span class="${COLOR[a.name] || ""}">${esc(agentTitle(a))}</span><span class="ter" style="margin-left:auto;font-weight:400">${a.paused ? "paused" : esc(a.status)}</span></div>`;
     if (a.name === "scanner") {
       const feed = (a.feed || []).slice(0, 5).map(f => f.verdict === "kill"
         ? `<a class="fr killed${pop("f" + f.mint)}" href="${coinHref(f.mint)}">${logo(f.name, f.logo, 20)}<span class="n">${esc(f.name)}</span><span class="r">${esc(f.reason)}</span></a>`
         : `<a class="fr${pop("f" + f.mint)}" href="${coinHref(f.mint)}">${logo(f.name, f.logo, 20)}<span class="n">${esc(f.name)} · liq ${kfmt(f.liquidityUsd)}</span><span class="cyan">→ auditor</span></a>`).join("");
-      return `<div class="acard">${head}<div class="stat">${a.pools} pools</div>
+      return `<div class="acard">${head}<div class="stat">${numOrDash(a.pools)} pools</div>
         ${feed ? `<div class="feed">${feed}</div>` : `<div class="sub">Listening for graduations</div>`}</div>`;
     }
     if (a.name === "auditor") {
       const c = a.current;
       const strips = (c ? c.strips : Array(8).fill(null)).map(p => `<i class="${p === true ? "ok" : p === false ? "bad" : ""}"></i>`).join("");
       const txt = c ? (/^\d+\/\d+ → Executor$/.test(c.text || "") ? `<span class="green">${esc(c.text)}</span>` : c.text === "taking apart..." ? `<span class="cyan">taking apart...</span>` : `<span class="red">${esc(c.text)}</span>`) : `<span class="sec">No coin taken apart yet</span>`;
-      return `<a class="acard" href="#/audit${c ? "/" + encodeURIComponent(c.mint) : ""}">${head}<div class="stat">${a.taken_apart} taken apart</div>
+      return `<a class="acard" href="#/audit${c ? "/" + encodeURIComponent(c.mint) : ""}">${head}<div class="stat">${numOrDash(a.taken_apart)} taken apart</div>
         <div class="sub cl">${c ? logo(c.name, c.logo, 18) + " " + esc(c.name) : ""}</div><div class="strips">${strips}</div>
-        <div class="foot"><span>${txt}</span><span class="sec" style="margin-left:auto">${a.rejected} rejected</span></div></a>`;
+        <div class="foot"><span>${txt}</span><span class="sec" style="margin-left:auto">${numOrDash(a.rejected)} rejected</span></div></a>`;
     }
     if (a.name === "analyst") {
       const l = a.last;
       return `<div class="acard">${head}<div class="stat">Scoring</div>
         <div class="ringwrap"><canvas class="ring" data-score="${l && l.score != null ? l.score : ""}" data-th="${a.min_score}"></canvas>
         <div><div>${l ? `<a href="${coinHref(l.mint)}" class="cl">${logo(l.name, l.logo, 20)} ${esc(l.name)}</a>` : "—"}</div><div class="sub">${l ? (l.passed ? '<span class="green">passed</span>' : esc(l.reason || "rejected")) : "No coin scored yet"}</div>
-        <div class="sub">${a.scored} scored · ${a.mode === "rules" ? "rules" : "Jev"}</div></div></div></div>`;
+        <div class="sub">${numOrDash(a.scored)} scored · ${a.mode === "rules" ? "rules" : (a.mode ? esc(a.mode) : "—")}</div></div></div></div>`;
     }
     if (a.name === "executor") {
       const l = a.last;
       const filled = l && l.filled;
-      return `<div class="acard">${head}<div class="stat">${a.trades} trades</div>
-        <div class="sub">${l && l.sizeUsd != null ? money(l.sizeUsd) : "—"} · ${a.stack_pct}% of stack</div>
+      return `<div class="acard">${head}<div class="stat">${numOrDash(a.trades)} trades</div>
+        <div class="sub">${l && l.sizeUsd != null ? money(l.sizeUsd) : "—"} · ${a.stack_pct == null ? "—" : a.stack_pct + "% of stack"}</div>
         <div class="bar"><i id="execbar" style="width:${filled ? 100 : 0}%"></i></div>
         <div class="foot"><span id="exectxt" class="${filled ? "green" : "sec"}">${l ? (filled ? "✓ Filled " + money(l.sizeUsd) : (l.status === "sent" ? "Put " + money(l.sizeUsd) + " on FOMO" : esc(l.status))) : "No signal yet"}</span>
         <span class="sec" style="margin-left:auto">${l ? `<a href="${coinHref(l.mint)}" class="cl">${logo(l.name, l.logo, 18)} ${esc(l.name)}</a>` : ""}</span></div></div>`;
     }
+    if (a.name !== "risk" && !a.pills) {
+      return `<div class="acard">${head}</div>`;
+    }
     const pills = (a.pills && (a.pills.stop || a.pills.trail))
       ? `<span class="pill mono redp">${esc(a.pills.stop || "")}</span><span class="pill mono greenp">${esc(a.pills.trail || "")}</span>`
       : "";
-    return `<div class="acard">${head}<div class="stat">${a.guarding ? "Guarding" : (TITLE[a.name] || a.name || "Idle")}</div>
+    return `<div class="acard">${head}<div class="stat">${a.guarding ? "Guarding" : "Idle"}</div>
       <div class="sub">${a.guarding ? a.guarding + " open" : "Nothing open"}${a.last_exit ? " · last exit " + esc(a.last_exit) : ""}</div>
       ${pills ? `<div class="foot">${pills}</div>` : ""}</div>`;
   }
@@ -1405,7 +1410,7 @@
       `<section class="hero glass"><div class="herotop"><span class="ter">${esc(heroLabel)}</span>${book === "PAPER" ? '<span class="pill paper">PAPER</span>' : book === "LIVE" ? '<span class="pill redp">LIVE</span>' : ""}${mixOn ? '<span class="pill">Mix</span>' : ""}${book === "LIVE" && (bk.wallet && bk.wallet.stale) ? '<span class="pill stale">sync stale</span>' : ""}</div>
        ${bookseg}
        ${heroBody}${(!missesOn && mixOn) ? mixBoard : ""}
-      <div class="achips">${st.agents.map(a => `<a class="achip" href="#/agents"><i class="live ${esc(a.paused ? "paused" : a.status)}"></i>${TITLE[a.name]}</a>`).join("")}</div></section>
+      <div class="achips">${st.agents.map(a => `<a class="achip" href="#/agents"><i class="live ${esc(a.paused ? "paused" : a.status)}"></i>${esc(agentTitle(a))}</a>`).join("")}</div></section>
       <div class="scanbox glass">
         <div class="sh" style="margin:0 0 8px;padding:0"><h2>Scan a coin</h2></div>
         ${scanFormHtml("")}
@@ -1596,8 +1601,8 @@
 
   function agentsTab() {
     if (!S.state) return navbar() + `<div class="sh"><h2>Agents</h2></div>` + AGENTS.map(() => `<div class="gut" style="margin-bottom:14px">${sk(260, null, "border-radius:20px")}</div>`).join("");
-    const count = a => ({ scanner: `${a.pools} pools`, auditor: `${a.taken_apart} taken apart`, analyst: `${a.scored} scored`,
-                          executor: `${a.trades} trades`, risk: a.guarding ? `Guarding ${a.guarding}` : "Nothing open" })[a.name];
+    const count = a => ({ scanner: `${numOrDash(a.pools)} pools`, auditor: `${numOrDash(a.taken_apart)} taken apart`, analyst: `${numOrDash(a.scored)} scored`,
+                          executor: `${numOrDash(a.trades)} trades`, risk: a.guarding ? `Guarding ${a.guarding}` : "Nothing open" })[a.name] || "—";
     const html = navbar() + `<div class="sh"><h2>Agents · ${S.state.running} running</h2></div>` + S.state.agents.map(a => {
       const d = S.decisions[a.name];
       const locked = a.name === "risk" && a.pause_locked;
@@ -1605,10 +1610,10 @@
           <span class="cn"><a class="cl" href="${coinHref(x.mint)}">${logo(x.name, x.logo, 20)} ${esc(x.name)}</a></span>
           <span class="${/kill|red|reject|skipped|missed/.test(x.verdict) ? "red" : /pass|bought|closed/.test(x.verdict) ? "green" : "sec"}">${esc(x.verdict)}${x.reason ? " · " + esc(x.reason) : ""}</span></div>`).join("")
           : '<div class="empty">No decisions yet tonight</div>') : sk(120, null, "margin-top:10px");
-      return `<div class="agentfull"><div class="top">${statusDot(a)}<span class="name ${COLOR[a.name]}">${TITLE[a.name]}</span>
+      return `<div class="agentfull"><div class="top">${statusDot(a)}<span class="name ${COLOR[a.name] || ""}">${esc(agentTitle(a))}</span>
           <span class="sec">${esc(count(a))}</span>
           <span class="swwrap" title="${locked ? "Locked while a position is open" : "Pause or resume by Telegram"}"><span class="switch ${a.paused ? "" : "on"} ${locked ? "locked" : ""}"></span></span></div>
-        <div class="note" style="padding:6px 0 0">${a.paused ? "Paused" : a.status === "running" ? "Running" : esc(a.status)} · ${locked ? "Risk can't be paused while a position is open." : `Type “${a.paused ? "resume" : "pause"} ${TITLE[a.name]}” in Telegram.`}</div>
+        <div class="note" style="padding:6px 0 0">${a.paused ? "Paused" : a.status === "running" ? "Running" : esc(a.status)} · ${locked ? "Risk can't be paused while a position is open." : `Type “${a.paused ? "resume" : "pause"} ${esc(agentTitle(a))}” in Telegram.`}</div>
         <div class="dec">${decs}</div>
         <a class="link" href="#/account?sec=${a.name}">Settings</a></div>`;
     }).join("");
@@ -1948,7 +1953,7 @@
   }
   function gtWanted(c) {
     if (!c || !c.mint) return;
-    if (SHOT) return;  // fixture screenshots use desk/coin.json candles only
+    if (SHOT && FIXTURE) return;  // fixture only: use desk/coin.json, skip GT
     const mint = c.mint, tf = tfFor(mint, c.age_h), key = mint + "|" + tf, o = OHLC[key];
     const pool = GT_POOL[mint] || c.pool;
     const canLookup = !!(c.address || mint);
@@ -3498,7 +3503,7 @@
   if ("serviceWorker" in navigator && !LOCAL) {
     let swReload = false;
     navigator.serviceWorker.addEventListener("controllerchange", () => { if (swReload) return; swReload = true; location.reload(); });
-    navigator.serviceWorker.register("sw.js?v=60", { updateViaCache: "none" }).then(reg => { try { reg.update(); } catch (e) {} }).catch(() => {});
+    navigator.serviceWorker.register("sw.js?v=61", { updateViaCache: "none" }).then(reg => { try { reg.update(); } catch (e) {} }).catch(() => {});
   }
   render();
   if (BASE) poll();
