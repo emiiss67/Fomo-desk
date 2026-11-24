@@ -7,7 +7,7 @@
   const QS = new URLSearchParams(location.search);
   const FIXTURE = LOCAL ? QS.get("fixture") : null;          // local screenshots only
   const POLL_VISIBLE_S = 1, POLL_HIDDEN_S = 15, POLL_S = POLL_VISIBLE_S, MAX_BACKOFF = 60;
-  const APP_VERSION = "v58";   // bump with every app release (also index.html ?v= and sw.js CACHE)
+  const APP_VERSION = "v59";   // bump with every app release (also index.html ?v= and sw.js CACHE)
   const AGENTS = ["scanner", "auditor", "analyst", "executor", "risk"];
   const TITLE = { scanner: "Scanner", auditor: "Auditor", analyst: "Analyst", executor: "Executor", risk: "Risk" };
   const COLOR = { scanner: "cyan", auditor: "", analyst: "yellow", executor: "green", risk: "pink" };
@@ -1260,6 +1260,29 @@
   // ---------- v56 Getting attention (pump.fun callouts are behind Cloudflare; DEX boosts / takeovers / GT trending / buys) ----------
   const ATT_SRC = { top_boost: "Top boosted", boost: "DEX boost", cto: "Takeover", profile: "New profile", gt: "Trending", rising: "Buys rising" };
   const usdC = v => v == null ? "—" : v >= 1e6 ? "$" + (v / 1e6).toFixed(1) + "M" : v >= 1e3 ? "$" + Math.round(v / 1e3) + "K" : "$" + Math.round(v);
+
+  function pumpTone(v) {
+    v = String(v || "insufficient").toLowerCase();
+    return v === "red" ? "bad" : v === "green" ? "ok" : v === "yellow" ? "warn" : "nc";
+  }
+  function pumpChip(pi) {
+    if (!pi) return "";
+    const v = String(pi.verdict || "insufficient");
+    const sc = pi.score != null ? " · " + pi.score : "";
+    const lab = v.toLowerCase() === "insufficient" ? "no data" : v.toUpperCase() + sc;
+    return `<div class="pumpchip ${pumpTone(v)}" title="${esc(pi.summary || "Pump Indicator")}">Pump ${esc(lab)}</div>`;
+  }
+  function pumpCard(pi) {
+    if (!pi) return "";
+    const v = String(pi.verdict || "insufficient");
+    const sc = pi.score != null ? String(pi.score) : "—";
+    const reasons = (pi.reasons || []).slice(0, 4).map(r => `<div class="s wrap">${esc(r)}</div>`).join("");
+    return `<div class="card pumpcard">
+      <div class="kv"><span>Pump Indicator</span><span class="pill ${pumpTone(v)}">${esc(v.toLowerCase() === "insufficient" ? "no data" : v.toUpperCase() + " · " + sc)}</span></div>
+      ${reasons || `<div class="s wrap">${esc(pi.summary || "no data")}</div>`}
+    </div>`;
+  }
+
   function attRow(c) {
     const nm = c.symbol || c.name || (c.mint || "").slice(0, 6);
     const why = (c.why || []).slice(0, 2).join(" · ") || (c.sources || []).map(x => ATT_SRC[x] || x).join(" · ");
@@ -1268,6 +1291,7 @@
       <span class="main"><div class="t">${esc(nm)} ${(c.sources || []).filter(x => !(x === "boost" && (c.sources || []).includes("top_boost"))).slice(0, 2).map(x => `<span class="attsrc">${esc(ATT_SRC[x] || x)}</span>`).join("")}</div>
       <div class="s wrap">${esc(why)}${esc(" · MC " + usdC(c.mcap) + tx)}</div></span>
       <span class="v"><span class="attscore" title="attention score">${esc(String(Math.round(c.score || 0)))}</span>
+      ${pumpChip(c.pump_indicator)}
       ${c.p5 != null ? `<div class="pnl ${c.p5 >= 0 ? "green" : "red"}">${esc(sgn(c.p5, 1))} 5m</div>` : ""}</span></a>`;
   }
   function attentionSection(n) {
@@ -1281,7 +1305,7 @@
     const a = S.attention;
     const body = !a ? '<div class="empty">The desk hasn’t published the attention list yet</div>'
       : (a.coins || []).length ? a.coins.map(attRow).join("") : '<div class="empty">Nothing getting attention right now</div>';
-    return backbar("Getting attention", "#/home") + `<div class="gut s sec wrap" style="margin:10px 0">Coins people are pushing now: DEX boosts, community takeovers, GeckoTerminal trending and fast-rising buys (pump.fun callouts are behind a Cloudflare check). Tap one to scan it. The bot only gives these a small score bump when its own scanner finds them; it never buys on attention alone.</div>
+    return backbar("Getting attention", "#/home") + `<div class="gut s sec wrap" style="margin:10px 0">Coins people are pushing now: DEX boosts, community takeovers, GeckoTerminal trending and fast-rising buys (pump.fun callouts are behind a Cloudflare check). Tap one to scan it. Pump Indicator scores each coin from data the desk already has (no data stays no data). The bot only gives these a small attention-score bump when its own scanner finds them; it never buys on attention alone.</div>
       <div class="list glass">${body}</div>${a && a.updated ? `<div class="gut ter sm" style="margin-top:8px">Updated ${esc(String(a.updated).slice(11, 16))} UTC</div>` : ""}`;
   }
   function home() {
@@ -1646,6 +1670,7 @@
       <div class="discs" id="discs">${discs}<div class="beam" id="beam"></div></div>
       <div class="verdict" id="verdict">${head}</div>
       <div class="list" id="lrows">${rows}</div>
+      ${pumpCard(a.pump_indicator)}
       <div class="card"><div class="kv"><span>Take apart before buying</span><span class="switch ${a.auditor_enabled ? "on" : ""} locked"></span></div>
         <div class="note" style="padding:4px 0 0">Change it in Telegram: “set auditor enabled off” (asks twice).</div></div>
       <div class="spacer"></div>${safeUrl(a.link) ? `<a class="cta" href="${esc(a.link)}" target="_blank" rel="noopener">Open on FOMO</a>` : ""}`;
@@ -3260,6 +3285,7 @@
               <span>P&amp;L <b class="${pnl.cls}">${esc(pnl.txt)}</b></span>
               <span>${esc(String(s.trades || 0))} trades</span>
             </div>
+            ${book.id === "live_auto" && s.paper ? `<div class="stratpaper">Paper ${esc((s.paper.wins || 0) + "/" + (s.paper.losses || 0))} · <b class="${stratPnl(s.paper).cls}">${esc(stratPnl(s.paper).txt)}</b> · ${esc(String(s.paper.trades || 0))} trades</div>` : ""}
           </div>
           <span class="swwrap" data-bot="${esc(book.id)}" data-id="${esc(s.id)}" data-on="${on ? "0" : "1"}" role="switch" aria-checked="${on ? "true" : "false"}" aria-label="${esc(s.label)}">
             <span class="switch ${on ? "on" : ""} ${busy ? "locked" : ""}"></span>
@@ -3273,7 +3299,7 @@
         el.onclick = () => toggleStrategy(el.dataset.bot, el.dataset.id, el.dataset.on === "1");
       });
     };
-    return { html: navbar() + `<div class="gut" style="margin-top:4px"><div class="s wrap">Toggles only turn a leg on or off. Hard checks, the 18% stop and the 50% daily stop stay as they are. Copy trade is paper only and never spends SOL.</div></div>` + blocks, after };
+    return { html: navbar() + `<div class="gut" style="margin-top:4px"><div class="s wrap">Every strategy can be turned on for each bot. Toggles only enable or disable a leg — hard checks, the 18% stop and the 50% daily stop stay as they are. Copy trade on Paper never spends SOL. Turning it on for the LIVE bot is an owner action and will spend SOL after the hard checks. Paper stats are shown under each LIVE row.</div></div>` + blocks, after };
   }
 
   function render() {
@@ -3354,7 +3380,7 @@
   if ("serviceWorker" in navigator && !LOCAL) {
     let swReload = false;
     navigator.serviceWorker.addEventListener("controllerchange", () => { if (swReload) return; swReload = true; location.reload(); });
-    navigator.serviceWorker.register("sw.js?v=58", { updateViaCache: "none" }).then(reg => { try { reg.update(); } catch (e) {} }).catch(() => {});
+    navigator.serviceWorker.register("sw.js?v=59", { updateViaCache: "none" }).then(reg => { try { reg.update(); } catch (e) {} }).catch(() => {});
   }
   render();
   if (BASE) poll();

@@ -1317,3 +1317,14 @@ html[data-theme="daylight"] .cd.dn .dn1,html[data-theme="daylight"] .cd.dn .dv{c
 .stratstats span{white-space:nowrap}
 .stratstats b{font-weight:700;color:var(--text)}
 .stratstats .green,.stratstats .red{font-weight:700}
+
+/* v59 Strategies paper stats + Pump Indicator */
+.stratpaper{margin-top:4px;font-size:12px;color:var(--sec)}
+.stratpaper b{font-weight:700}
+.pumpchip{margin-top:4px;display:inline-block;font-size:10px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;padding:2px 6px;border-radius:8px;background:var(--card2);color:var(--sec)}
+.pumpchip.ok{color:var(--green);background:color-mix(in srgb,var(--green) 16%,transparent)}
+.pumpchip.bad{color:var(--red);background:color-mix(in srgb,var(--red) 16%,transparent)}
+.pumpchip.warn{color:var(--orange);background:color-mix(in srgb,var(--orange) 16%,transparent)}
+.pumpcard .pill.ok{color:var(--green)}
+.pumpcard .pill.bad{color:var(--red)}
+.pumpcard .pill.warn{color:var(--orange)}
