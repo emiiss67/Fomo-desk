@@ -249,21 +249,27 @@
         const n = c.items.length;
         const allBuy = c.items.every(isBuy);
         const allSell = c.items.every(m => !isBuy(m));
-        const col = allBuy ? C.green : allSell ? C.red : C.text;
+        const ring = allBuy ? C.green : allSell ? C.red : (C.orange || "#ffd60a");
         ctx.globalAlpha = i >= prevMarks ? markAlpha : 1;
-        ctx.beginPath();
-        ctx.arc(c.x, y, n > 1 ? 7 : 3.5, 0, Math.PI * 2);
-        ctx.fillStyle = col;
-        ctx.fill();
         if (n > 1) {
-          ctx.strokeStyle = C.bg || "#0b0b0f";
-          ctx.lineWidth = 1.5;
+          // Dark disc + coloured ring so the count stays readable on any theme.
+          ctx.beginPath();
+          ctx.arc(c.x, y, 8, 0, Math.PI * 2);
+          ctx.fillStyle = "rgba(12,12,16,0.92)";
+          ctx.fill();
+          ctx.lineWidth = 2;
+          ctx.strokeStyle = ring;
           ctx.stroke();
           ctx.fillStyle = "#fff";
           ctx.font = "700 9px " + FONT;
           ctx.textAlign = "center";
           ctx.textBaseline = "middle";
           ctx.fillText(n > 99 ? "99+" : String(n), c.x, y + 0.5);
+        } else {
+          ctx.beginPath();
+          ctx.arc(c.x, y, 3.5, 0, Math.PI * 2);
+          ctx.fillStyle = ring;
+          ctx.fill();
         }
         ctx.globalAlpha = 1;
       });
