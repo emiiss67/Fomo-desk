@@ -6,8 +6,10 @@
   const LOCAL = ["localhost", "127.0.0.1"].includes(location.hostname);
   const QS = new URLSearchParams(location.search);
   const FIXTURE = LOCAL ? QS.get("fixture") : null;          // local screenshots only
+  const SHOT = !!(FIXTURE && QS.get("shot"));                // one-shot render, no poll loop
+  if (LOCAL) { const b = QS.get("book"); if (b) try { window.__seedBook = b; } catch (e) {} }
   const POLL_VISIBLE_S = 1, POLL_HIDDEN_S = 15, POLL_S = POLL_VISIBLE_S, MAX_BACKOFF = 60;
-  const APP_VERSION = "v59";   // bump with every app release (also index.html ?v= and sw.js CACHE)
+  const APP_VERSION = "v60";   // bump with every app release (also index.html ?v= and sw.js CACHE)
   const AGENTS = ["scanner", "auditor", "analyst", "executor", "risk"];
   const TITLE = { scanner: "Scanner", auditor: "Auditor", analyst: "Analyst", executor: "Executor", risk: "Risk" };
   const COLOR = { scanner: "cyan", auditor: "", analyst: "yellow", executor: "green", risk: "pink" };
@@ -409,19 +411,65 @@
   const money = v => fmtMoney(v, false);
   const shortAddr = a => { a = a == null ? "" : String(a); return a.length <= 12 ? a : a.slice(0, 4) + "…" + a.slice(-4); };
   function activeBook() {
-    if (S.book === "misses" || S.book === "LIVE" || S.book === "PAPER") return S.book;
+    if (["misses", "LIVE", "PAPER", "live_auto", "paper_bot"].includes(S.book)) return S.book;
     return (S.state && S.state.mode === "LIVE") ? "LIVE" : "PAPER";
   }
   function bookSnap() {
     const book = activeBook();
     if (book === "misses") return null;
+    if (book === "live_auto" || book === "paper_bot") {
+      const ch = botBookChart(book) || {};
+      const usd = ch.value_usd, sol = ch.value_sol, px = ch.sol_usd;
+      const fiat = usd != null ? usd : (sol != null && px ? sol * px : null);
+      return {
+        balance: (hasEur() && fiat != null) ? usdToEur(fiat) : (fiat != null ? fiat : sol),
+        today_pct: (hasEur() && ch.today_pct_usd != null) ? ch.today_pct_usd : (ch.today_pct_sol != null ? ch.today_pct_sol : ch.today_pct_usd),
+        multiplier: (hasEur() && ch.multiplier_usd != null) ? ch.multiplier_usd : (ch.multiplier_sol != null ? ch.multiplier_sol : ch.multiplier_usd),
+        _unit: (hasEur() && fiat != null) ? "eur" : (fiat != null ? "usd" : "sol")
+      };
+    }
     const st = S.state || {};
     if (st.books && st.books[book]) return st.books[book];
     if (book === (st.paper ? "PAPER" : "LIVE")) return st;
     return null;
   }
+  function botBookChart(id) {
+    const books = S.bot && S.bot.chart && S.bot.chart.books;
+    if (books && books[id]) return books[id];
+    if (id === "live_auto" && S.bot && S.bot.chart) return S.bot.chart;
+    return null;
+  }
+  function rangePoints(ch, name, unit) {
+    const r = (ch && ch.ranges && (ch.ranges[name] || ch.ranges[name && ch.ranges[name].fallback])) || {};
+    const hinted = r.fallback && ch && ch.ranges && ch.ranges[r.fallback];
+    const src = ((r.points_sol && r.points_sol.length) || (r.points_usd && r.points_usd.length) || (r.points && r.points.length)) ? r : (hinted || r);
+    const solPx = (ch && +ch.sol_usd > 0) ? +ch.sol_usd : (typeof solUsdNow === "function" ? solUsdNow() : null);
+    const marks = src.marks || r.marks || [];
+    if (unit === "sol") {
+      const pts = src.points_sol || src.points || [];
+      return { points: pts, marks, empty: !pts.length, start: ch && ch.start_sol, unit: "SOL" };
+    }
+    if (unit === "usd") {
+      const pts = src.points_usd || src.points || [];
+      return { points: pts, marks, empty: !pts.length, start: ch && ch.start_usd, unit: "USD" };
+    }
+    const usd = src.points_usd || [];
+    if (usd.length && typeof usdToEur === "function")
+      return { points: usd.map(q => [q[0], usdToEur(q[1])]), marks, empty: false,
+               start: ch && ch.start_usd != null ? usdToEur(ch.start_usd) : null, unit: "EUR" };
+    const sol = src.points_sol || [];
+    if (sol.length && solPx && typeof solToEur === "function")
+      return { points: sol.map(q => [q[0], solToEur(q[1], solPx)]), marks, empty: false,
+               start: ch && ch.start_sol != null ? solToEur(ch.start_sol, solPx) : null, unit: "EUR" };
+    const pts = src.points || [];
+    if (pts.length && hasEur && hasEur())
+      return { points: pts.map(q => [q[0], usdToEur(q[1])]), marks, empty: false,
+               start: ch && ch.start_value != null ? usdToEur(ch.start_value) : null, unit: "EUR" };
+    return { points: pts, marks, empty: !pts.length, start: ch && (ch.start_value != null ? ch.start_value : ch.start_usd), unit: hasEur && hasEur() ? "EUR" : "USD" };
+  }
   function bookChart() {
     const book = activeBook(), ch = S.chart || {};
+    if (book === "live_auto" || book === "paper_bot") return botBookChart(book) || { ranges: {}, start_value: null };
     if (ch.books && ch.books[book]) return ch.books[book];
     if (book === ((S.state && S.state.paper) ? "PAPER" : "LIVE")) return ch;
     return { ranges: {}, start_value: null };
@@ -721,7 +769,8 @@
   async function get(rel) {
     const sep = rel.includes("?") ? "&" : "?";
     const r = await fetch(BASE + rel + sep + "v=" + Date.now(), {
-      cache: "no-store", headers: { "Cache-Control": "no-cache", Pragma: "no-cache" }
+      cache: "no-store", headers: { "Cache-Control": "no-cache", Pragma: "no-cache" },
+      signal: SHOT ? AbortSignal.timeout(8000) : undefined
     });
     if (r.status !== 200) { const e = new Error("HTTP " + r.status); e.status = r.status; throw e; }
     return r.json();
@@ -802,8 +851,13 @@
       if (!S.err) changedSomething = true;
       S.err = true; S.backoff = Math.min((S.backoff || pollDelayS()) * 2, MAX_BACKOFF);
     }
-    if (changedSomething) render();
+    try { if (changedSomething) render(); }
+    catch (e) { console.error("render failed", e); S.err = true; document.documentElement.dataset.shotErr = String(e && e.message || e); }
     pollInFlight = false;
+    if (SHOT) {
+      document.documentElement.dataset.shot = S.err ? "err" : "ready";
+      return;
+    }
     if (pollAgain) { pollAgain = false; schedulePoll(0); }
     else schedulePoll(S.err ? S.backoff * 1000 : pollDelayS() * 1000);
   }
@@ -815,7 +869,7 @@
     offline.hidden = false;
     offline.textContent = `Desk offline · retrying in ${n}s · last update ${S.lastGood ? S.lastGood.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false }) : "never"}`;
   }
-  setInterval(tickOffline, 1000);
+  if (!SHOT) setInterval(tickOffline, 1000);
 
   // ---------- odometer: each changed digit rolls 600ms ease-out, 30ms stagger right to left ----------
   function odometer(text) {
@@ -906,13 +960,15 @@
         <div class="foot"><span id="exectxt" class="${filled ? "green" : "sec"}">${l ? (filled ? "✓ Filled " + money(l.sizeUsd) : (l.status === "sent" ? "Put " + money(l.sizeUsd) + " on FOMO" : esc(l.status))) : "No signal yet"}</span>
         <span class="sec" style="margin-left:auto">${l ? `<a href="${coinHref(l.mint)}" class="cl">${logo(l.name, l.logo, 18)} ${esc(l.name)}</a>` : ""}</span></div></div>`;
     }
-    const pills = `<span class="pill mono redp">${esc(a.pills.stop)}</span><span class="pill mono greenp">${esc(a.pills.trail)}</span>`;
-    return `<div class="acard">${head}<div class="stat">${a.guarding ? "Guarding" : "Idle"}</div>
+    const pills = (a.pills && (a.pills.stop || a.pills.trail))
+      ? `<span class="pill mono redp">${esc(a.pills.stop || "")}</span><span class="pill mono greenp">${esc(a.pills.trail || "")}</span>`
+      : "";
+    return `<div class="acard">${head}<div class="stat">${a.guarding ? "Guarding" : (TITLE[a.name] || a.name || "Idle")}</div>
       <div class="sub">${a.guarding ? a.guarding + " open" : "Nothing open"}${a.last_exit ? " · last exit " + esc(a.last_exit) : ""}</div>
-      <div class="foot">${pills}</div></div>`;
+      ${pills ? `<div class="foot">${pills}</div>` : ""}</div>`;
   }
   function afterCards() {
-    view.querySelectorAll("canvas.ring").forEach(c => DeskChart.ring(c, c.dataset.score === "" ? null : +c.dataset.score, +c.dataset.th));
+    if (window.DeskChart) view.querySelectorAll("canvas.ring").forEach(c => DeskChart.ring(c, c.dataset.score === "" ? null : +c.dataset.score, +c.dataset.th));
     const ex = card("executor"), l = ex && ex.last;
     const key = l ? l.mint + l.status : null;
     if (l && l.filled && execAnim !== null && execAnim !== key && !RM()) {   // a new fill: bar runs 1.2s
@@ -1309,19 +1365,27 @@
       <div class="list glass">${body}</div>${a && a.updated ? `<div class="gut ter sm" style="margin-top:8px">Updated ${esc(String(a.updated).slice(11, 16))} UTC</div>` : ""}`;
   }
   function home() {
-
+    if (LOCAL && QS.get("book")) S.book = QS.get("book");
+    if (LOCAL && QS.get("range")) S.range = QS.get("range");
     if (!S.state) return loadingHome();
     const st = S.state, book = activeBook(), missesOn = book === "misses", bk = bookSnap() || {};
     const bal = missesOn ? (st.misses || []).length : (bk.balance != null ? bk.balance : st.balance);
-    const odo = missesOn ? { html: esc(String(bal)), roll: false } : odometer(money(bal));
+    const balTxt = missesOn ? String(bal) : (bk._unit === "sol" && bal != null ? Number(bal).toFixed(4) + " SOL" : money(bal));
+    const odo = missesOn ? { html: esc(String(bal)), roll: false } : odometer(balTxt);
     const today = missesOn ? null : (bk.today_pct != null || (bk.balance != null) ? bk.today_pct : st.today_pct);
     const mult = missesOn ? null : (bk.multiplier != null || (bk.balance != null) ? bk.multiplier : st.multiplier);
     const unpriced = missesOn ? 0 : (bk.balance_unpriced_positions != null ? bk.balance_unpriced_positions : st.balance_unpriced_positions);
     const ch = bookChart();
-    const rng = (ch && ch.ranges && ch.ranges[S.range]) || { points: [], marks: [] };
+    const autoBook = book === "live_auto" || book === "paper_bot";
+    const wantUnit = autoBook ? (hasEur() ? "eur" : "sol") : (hasEur() ? "eur" : "usd");
+    const rng = rangePoints(ch, S.range, wantUnit);
     const paperLabel = st.mode === "LIVE" ? "PAPER shadow" : "PAPER";
-    const heroLabel = missesOn ? "Misses tonight" : (book === "LIVE" ? "LIVE stack" : (st.mode === "LIVE" ? "PAPER shadow stack" : "PAPER stack"));
-    const bookseg = `<div class="ranges bookseg" role="tablist" aria-label="Book">${[["LIVE","LIVE"],["PAPER",paperLabel],["misses","Misses"]].map(([id, label]) =>
+    const heroLabel = missesOn ? "Misses tonight"
+      : book === "live_auto" ? "LIVE auto bot"
+      : book === "paper_bot" ? "Paper bot"
+      : book === "LIVE" ? "LIVE FOMO stack"
+      : (st.mode === "LIVE" ? "PAPER shadow stack" : "Desk PAPER stack");
+    const bookseg = `<div class="ranges bookseg" role="tablist" aria-label="Book">${[["live_auto","LIVE auto"],["paper_bot","Paper bot"],["LIVE","LIVE FOMO"],["PAPER",paperLabel],["misses","Misses"]].map(([id, label]) =>
       `<button type="button" data-book="${id}" class="${id === book ? "on" : ""}">${esc(label)}</button>`).join("")}</div>`;
     const missRows = (st.misses || []).map(missRow).join("");
     const rows = ((S.activity[0] && S.activity[0].rows) || []).slice(0, 5);
@@ -1333,7 +1397,7 @@
       : `<div class="bigrow"><span class="big odo glow" aria-label="${esc(money(bal))}">${odo.html}</span></div>
          <div class="today"><span class="${today == null ? "sec" : today >= 0 ? "green" : "red"}">${today == null ? "—" : sgn(today)}</span><span class="sec">today</span>
          ${mult != null ? `<span class="pill mult">${Number(mult).toFixed(2)}×</span>` : ""}${unpriced ? `<span class="ter">${unpriced} position${unpriced > 1 ? "s" : ""} not priced yet</span>` : ""}</div>
-        <div class="chartwrap">${(book === "LIVE" && (rng.empty || !(rng.points || []).some(p => p[1]))) ? `<div class="chartempty">No LIVE FOMO fills</div>` : `<canvas id="line"></canvas>${rng.points.length ? "" : `<div class="chartempty">${book === "LIVE" && st.paper ? "no LIVE data yet" : "Waiting for the first trade"}</div>`}`}</div>
+        <div class="chartwrap"><canvas id="line"></canvas></div>
         <div class="ranges">${["LIVE", "1H", "4H", "1D", "1W", "ALL"].map(r => `<button data-range="${r}" class="${r === S.range ? "on" : ""}">${r}</button>`).join("")}</div>`;
     const mixOn = !!(S.state && S.state.mix && S.state.mix.active) && !missesOn;
     const mixBoard = mixOn ? `<div class="mixgrid">${(mixCards() || []).map(mixCard).join("")}</div>` : "";
@@ -1365,8 +1429,19 @@
       if (odo.roll) runOdometer();
       const line = document.getElementById("line");
       if (line && window.DeskChart) {
-        const start = (ch && ch.start_value != null) ? ch.start_value : (S.chart && S.chart.start_value);
-        chartPrev = DeskChart.line(line, { points: rng.points, marks: enrichMarks(rng.marks), start, onMarks: items => paintChartMarks(line, items) }, chartPrev);
+        const start = rng.start != null ? rng.start : (ch && (ch.start_value != null ? ch.start_value : ch.start_sol));
+        const fmtBal = rng.unit === "SOL" ? (v => v == null || !isFinite(v) ? "—" : Number(v).toFixed(4) + " SOL") : money;
+        const empty = rng.empty || !(rng.points || []).length
+          ? (book === "LIVE" ? "No LIVE FOMO balance history for this range" :
+             book === "live_auto" ? "No LIVE auto-bot balance history for this range" :
+             book === "paper_bot" ? "No paper-bot balance history for this range" :
+             "No balance history for this range")
+          : "";
+        chartPrev = DeskChart.line(line, {
+          points: rng.points, marks: enrichMarks(rng.marks || []), start,
+          fmt: fmtBal, unit: rng.unit || "", emptyText: empty,
+          onMarks: items => paintChartMarks(line, items)
+        }, chartPrev);
       }
       afterCards();
     } };
@@ -1715,7 +1790,7 @@
   const GT_POOL = {};   // mint -> resolved GT pool address
   // timeframe -> [GeckoTerminal endpoint, aggregate, seconds per candle]
   const TFS = { "1s": ["second", 1, 1], "1m": ["minute", 1, 60], "5m": ["minute", 5, 300], "15m": ["minute", 15, 900], "1h": ["hour", 1, 3600], "4h": ["hour", 4, 14400], "1d": ["day", 1, 86400] };
-  const tfFor = (mint, ageH) => S.tf[mint] || (ageH != null && ageH > 36 ? "1h" : ageH != null && ageH > 12 ? "15m" : ageH != null && ageH > 3 ? "5m" : "1m");
+  const tfFor = (mint, ageH) => (QS.get("tf") && TFS[QS.get("tf")] ? QS.get("tf") : null) || S.tf[mint] || (ageH != null && ageH > 36 ? "1h" : ageH != null && ageH > 12 ? "15m" : ageH != null && ageH > 3 ? "5m" : "1m");
   const ohlcKey = (mint, ageH) => mint + "|" + tfFor(mint, ageH);
   function gtNet(c) {
     const ch = String((c && c.chain) || "solana").toLowerCase();
@@ -1873,6 +1948,7 @@
   }
   function gtWanted(c) {
     if (!c || !c.mint) return;
+    if (SHOT) return;  // fixture screenshots use desk/coin.json candles only
     const mint = c.mint, tf = tfFor(mint, c.age_h), key = mint + "|" + tf, o = OHLC[key];
     const pool = GT_POOL[mint] || c.pool;
     const canLookup = !!(c.address || mint);
@@ -1890,16 +1966,25 @@
     const token = c.address || mint;
     const hinted = pool && !GT_POOL[mint + ":miss:" + (c.pool || "")] ? pool : null;
     const lookupUrl = `https://api.geckoterminal.com/api/v2/networks/${net}/tokens/${encodeURIComponent(token)}/pools?page=1`;
-    const ohlcvUrl = p => `https://api.geckoterminal.com/api/v2/networks/${net}/pools/${encodeURIComponent(p)}/ohlcv/${ep}?aggregate=${agg}&limit=${step <= 1 ? 1000 : 150}&currency=usd`;
+    // Public GeckoTerminal pool OHLCV is minute|hour|day only; `second` is paid-plan and 401s.
+    const pubEp = ep === "second" ? "minute" : ep;
+    const pubAgg = ep === "second" ? 1 : agg;
+    const parseStep = ep === "second" ? 60 : step;
+    const ohlcvUrl = p => `https://api.geckoterminal.com/api/v2/networks/${net}/pools/${encodeURIComponent(p)}/ohlcv/${pubEp}?aggregate=${pubAgg}&limit=1000&currency=usd&include_empty_intervals=true`;
     const failSoft = e => {
+      const msg = !e || !e.status || e.status === 429
+        ? "GeckoTerminal busy · retry in 15s"
+        : e.status === 401 ? "This timeframe isn’t on the public GeckoTerminal plan"
+        : e.status === 404 ? "No GeckoTerminal candles for this pool"
+        : "Couldn’t load GeckoTerminal candles";
       if (!e || !e.status || e.status === 429) {
         gtPauseUntil = Date.now() + 15000;
-        OHLC[key] = Object.assign(OHLC[key] || { cs: [] }, { at: 0, loading: true, waitUntil: gtPauseUntil });
+        OHLC[key] = Object.assign(OHLC[key] || { cs: [] }, { at: 0, loading: true, waitUntil: gtPauseUntil, error: msg });
         gtEnqueue(c);
-      } else OHLC[key] = Object.assign(OHLC[key] || { cs: [] }, { at: Date.now(), loading: false, failed: true });
+      } else OHLC[key] = Object.assign(OHLC[key] || { cs: [] }, { at: Date.now(), loading: false, failed: true, error: msg });
     };
     const loadOhlcv = p => gtFetch(ohlcvUrl(p)).then(j => {
-      const cs = gtParseOhlcv(j, step);
+      const cs = gtParseOhlcv(j, parseStep);
       // A handful of dust-pool prints is worse than the desk series — keep looking.
       const minCs = step >= 3600 ? 1 : 5;
       if (!cs.length || cs.length < minCs) { const e = new Error("HTTP 404"); e.status = 404; throw e; }
@@ -2089,14 +2174,37 @@
       b.onclick = e => { e.preventDefault(); applyTf(mint || b.dataset.mint, b.dataset.tf); };
     });
   }
+  function drawCoinChart(cv, rawList, opts) {
+    if (!cv || !window.DeskChart) return null;
+    try {
+      return DeskChart.candles(cv, rawList, null, opts);
+    } catch (e) {
+      try {
+        const ctx = cv.getContext && cv.getContext("2d");
+        if (ctx) {
+          ctx.clearRect(0, 0, cv.width, cv.height);
+        }
+      } catch (e2) {}
+      const wrap = cv.parentNode;
+      if (wrap && !wrap.querySelector(".chartempty")) {
+        const d = document.createElement("div");
+        d.className = "chartempty";
+        d.textContent = "Couldn’t draw this chart";
+        wrap.appendChild(d);
+      }
+      return null;
+    }
+  }
   function chartSrc(mint, c) {
+
     const cur = tfFor(mint, c.age_h), g = OHLC[mint + "|" + cur];
     const wait = g && g.waitUntil && g.waitUntil > Date.now() ? Math.ceil((g.waitUntil - Date.now()) / 1000) : 0;
     const named = (c && c.candle_source) ? String(c.candle_source) : "";
     const liveN = (LIVE_TICKS[mint] || []).length;
-    const src = g && g.cs && g.cs.length ? `${cur} · GeckoTerminal`
+    const src = g && g.cs && g.cs.length ? `${cur} · GeckoTerminal` + (cur === "1s" ? " (1m + live)" : "")
       : named && named !== "desk prices" && ((c.candles || []).length || liveN) ? `${cur} · ${named}`
       : ((c.candles || []).length || liveN) ? `${cur} · ${named || (liveN ? "DexScreener" : "desk prices")}`
+      : (g && g.failed) ? (g.error || "Couldn’t load this chart")
       : (g ? g.loading : !!(c.pool || c.address)) ? (wait ? `GeckoTerminal busy · retry in ${wait}s` : `Loading ${cur}…`)
       : "";
     return `<span class="tfs" role="group" aria-label="Chart timeframe">${Object.keys(TFS).map(k => `<button type="button" data-tf="${k}" data-mint="${esc(mint)}" class="${k === cur ? "on" : ""}" aria-pressed="${k === cur}">${k}</button>`).join("")}</span><span class="srcl">${esc(src)}</span>`;
@@ -2263,7 +2371,7 @@
       const draft = S.lineDraft[mint] || {};
       const lines = (k == null) ? [] : posChartLines(p && p.entryPrice, p && p.open ? p.lines : null, p && p.open ? draft : {}, ath, sc, { exit: p && !p.open ? p.exitPrice : null });
       const livePx = livePrice(mint, c);
-      const lastC = DeskChart.candles(cv, rawList, null,
+      const lastC = drawCoinChart(cv, rawList,
                         { loading: !!(c.pool || c.address) && (!g || g.loading) && !base.length, step, min: 1, fmt: mcOn ? kfmt : undefined,
                           lines, entryLine: null,
                           fit: !userZ && !saved,
@@ -2828,6 +2936,7 @@
   // ---------- v33 Bot tab: the auto-trading bot's own book (bot.json, read-only; actions = Telegram deep links) ----------
   let botChartPrev = null;
   function botTab() {
+    if (LOCAL && QS.get("botrange")) S.botRange = QS.get("botrange");
     const b = S.bot;
     if (!b) return navbar() + `<div class="gut" style="margin-top:12px">${S.botMissing ? '<div class="list"><div class="empty">The desk hasn’t published bot.json yet</div></div>' : sk(420, null, "border-radius:14px")}</div>`;
     const sol = v => v == null ? "—" : Number(v).toFixed(4) + " SOL";
@@ -2988,7 +3097,14 @@
       if (c) c.onclick = async () => { try { await navigator.clipboard.writeText(b.address); toast("Address copied"); } catch (e) { toast(b.address); } };
       const line = document.getElementById("botline");
       if (line && window.DeskChart) {
-        botChartPrev = DeskChart.line(line, { points, marks: enrichMarks(rng.marks || []), start, onMarks: items => paintChartMarks(line, items) }, botChartPrev);
+        const fmtBot = unit === "sol" ? (v => v == null || !isFinite(v) ? "—" : Number(v).toFixed(4) + " SOL")
+          : unit === "usd" ? (v => v == null || !isFinite(v) ? "—" : money(v)) : money;
+        botChartPrev = DeskChart.line(line, {
+          points, marks: enrichMarks(rng.marks || []), start,
+          fmt: fmtBot, unit: unit === "sol" ? "SOL" : (unit === "usd" ? "USD" : "EUR"),
+          emptyText: points && points.length ? "" : "No balance history for this range",
+          onMarks: items => paintChartMarks(line, items)
+        }, botChartPrev);
       }
       view.querySelectorAll("[data-botrange]").forEach(b => b.onclick = () => { S.botRange = b.dataset.botrange; botChartPrev = null; render(); });
       view.querySelectorAll("[data-botunit]").forEach(b => b.onclick = () => { S.botUnit = b.dataset.botunit; botChartPrev = null; render(); });
@@ -3152,7 +3268,7 @@
         const userZ = !!S.chartZoomUser[zkey];
         const saved = S.chartOff[zkey] != null || S.chartSlotBot[zkey] != null;
         if (saved) cv._st = Object.assign(cv._st || {}, { off: S.chartOff[zkey] || 0, slot: S.chartSlotBot[zkey] || cv._st && cv._st.slot });
-        const lastC = DeskChart.candles(cv, list, null, {
+        const lastC = drawCoinChart(cv, list, {
           loading: !!(coint.pool || coint.address || coint.mint) && (!g || g.loading) && !base.length,
           step, min: 1, lines, entryLine: null,
           until: Date.now() / 1000,
@@ -3286,6 +3402,8 @@
               <span>${esc(String(s.trades || 0))} trades</span>
             </div>
             ${book.id === "live_auto" && s.paper ? `<div class="stratpaper">Paper ${esc((s.paper.wins || 0) + "/" + (s.paper.losses || 0))} · <b class="${stratPnl(s.paper).cls}">${esc(stratPnl(s.paper).txt)}</b> · ${esc(String(s.paper.trades || 0))} trades</div>` : ""}
+            ${s.promo && s.promo.reason ? `<div class="stratpromo">${esc(s.promo.state ? s.promo.state.replace(/_/g, " ") + " · " : "")}${esc(s.promo.reason)}</div>` : ""}
+            ${s.id === "copy" && s.copy_latency && s.copy_latency.n ? `<div class="copylat">Avg copy latency <b>${esc(s.copy_latency.avg_ms == null ? "—" : Math.round(s.copy_latency.avg_ms) + " ms")}</b> · ${esc(String(s.copy_latency.n))} timed fill${s.copy_latency.n === 1 ? "" : "s"}</div>` : (s.id === "copy" ? `<div class="copylat">Avg copy latency — · no timed fills yet</div>` : "")}
           </div>
           <span class="swwrap" data-bot="${esc(book.id)}" data-id="${esc(s.id)}" data-on="${on ? "0" : "1"}" role="switch" aria-checked="${on ? "true" : "false"}" aria-label="${esc(s.label)}">
             <span class="switch ${on ? "on" : ""} ${busy ? "locked" : ""}"></span>
@@ -3380,7 +3498,7 @@
   if ("serviceWorker" in navigator && !LOCAL) {
     let swReload = false;
     navigator.serviceWorker.addEventListener("controllerchange", () => { if (swReload) return; swReload = true; location.reload(); });
-    navigator.serviceWorker.register("sw.js?v=59", { updateViaCache: "none" }).then(reg => { try { reg.update(); } catch (e) {} }).catch(() => {});
+    navigator.serviceWorker.register("sw.js?v=60", { updateViaCache: "none" }).then(reg => { try { reg.update(); } catch (e) {} }).catch(() => {});
   }
   render();
   if (BASE) poll();

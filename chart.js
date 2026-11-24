@@ -53,7 +53,7 @@
 
   function setup(canvas, cssH) {
     const dpr = window.devicePixelRatio || 1;
-    const w = canvas.clientWidth || canvas.parentNode.clientWidth;
+    const w = Math.max(canvas.clientWidth || 0, (canvas.parentNode && canvas.parentNode.clientWidth) || 0, 320);
     canvas.style.height = cssH + "px";
     if (canvas.width !== Math.round(w * dpr) || canvas.height !== Math.round(cssH * dpr)) {
       canvas.width = Math.round(w * dpr); canvas.height = Math.round(cssH * dpr);
@@ -75,11 +75,16 @@
      Dots stay on the canvas; compact icon chips are laid out and handed to data.onMarks. */
   function line(canvas, data, prev) {
     const C = themeC();
-    const pts = (data.points || []).map(p => [Date.parse(p[0]), p[1]]).filter(p => p[1] !== null);
+    const pts = (data.points || []).map(p => [Date.parse(p[0]), p[1]]).filter(p => isFinite(p[0]) && p[1] != null && isFinite(p[1]));
     const marks = data.marks || [];
     const H = 220;
+    const left = 8, right = 56, top = 16, botPad = 26;
     const prevLen = prev && prev.len || 0, prevMarks = prev && prev.marks || 0;
     const grow = pts.length > prevLen && prevLen > 0;
+    const fmt = typeof data.fmt === "function" ? data.fmt : (v => v == null ? "—" : String(v));
+    const unit = data.unit || "";
+    const emptyText = data.emptyText || "No balance history for this range";
+    const tz = data.tz || "Europe/Vilnius";
     function shortLabel(m) {
       if (m.label) return m.label;
       if (m.kind === "bought" || /^Bought /i.test(m.text || "")) {
@@ -87,34 +92,44 @@
       }
       return m.text || "";
     }
-    function layoutMarks(ctx, w, X, yAt) {
+    function fmtTime(ms, span) {
+      if (!isFinite(ms)) return "";
+      const d = new Date(ms);
+      const opt = span > 3 * 86400000
+        ? { timeZone: tz, month: "short", day: "numeric" }
+        : span > 6 * 3600000
+          ? { timeZone: tz, month: "short", day: "numeric", hour: "2-digit", minute: "2-digit", hour12: false }
+          : { timeZone: tz, hour: "2-digit", minute: "2-digit", hour12: false };
+      try { return d.toLocaleString("en-GB", opt); } catch (e) { return d.toISOString().slice(11, 16); }
+    }
+    function layoutMarks(ctx, w, plotL, plotR, plotTop, plotBot, X, yAt) {
       const MH = 22, GAP = 4, ICON = 16;
       ctx.font = "600 11px " + FONT;
       const vis = marks.map(m => ({ ...m, x: X(Date.parse(m.ts)), label: shortLabel(m) }))
-        .filter(m => m.x >= -8 && m.x <= w + 8)
+        .filter(m => m.x >= plotL - 8 && m.x <= plotR + 8)
         .sort((a, b) => a.x - b.x);
       const boxes = [];
       const fits = (x, y, mw) => {
-        if (y < 1 || y + MH > H - 1 || x < 0 || x + mw > w) return false;
+        if (y < plotTop || y + MH > plotBot || x < plotL || x + mw > plotR) return false;
         return boxes.every(b => x + mw + GAP <= b.x || b.x + b.w + GAP <= x || y + MH + 2 <= b.y || b.y + b.h + 2 <= y);
       };
       const nudges = [0, -10, 10, -20, 20, -32, 32, -46, 46, -60, 60];
       vis.forEach(m => {
         const tw = ctx.measureText(m.label).width;
         const mw = Math.ceil(3 + ICON + 4 + tw + 7);
-        const ideal = Math.min(Math.max(m.x - mw / 2, 0), Math.max(0, w - mw));
+        const ideal = Math.min(Math.max(m.x - mw / 2, plotL), Math.max(plotL, plotR - mw));
         const yLine = yAt(m.x);
         let placed = null;
         const tryPos = (x, y) => { if (!placed && fits(x, y, mw)) placed = { x, y }; };
         for (let r = 0; r < 6 && !placed; r++) {
           const y = yLine - 8 - MH - r * (MH + GAP);
-          for (const d of nudges) tryPos(Math.min(Math.max(ideal + d, 0), Math.max(0, w - mw)), y);
+          for (const d of nudges) tryPos(Math.min(Math.max(ideal + d, plotL), Math.max(plotL, plotR - mw)), y);
         }
         for (let r = 0; r < 6 && !placed; r++) {
           const y = yLine + 8 + r * (MH + GAP);
-          for (const d of nudges) tryPos(Math.min(Math.max(ideal + d, 0), Math.max(0, w - mw)), y);
+          for (const d of nudges) tryPos(Math.min(Math.max(ideal + d, plotL), Math.max(plotL, plotR - mw)), y);
         }
-        if (!placed) placed = { x: ideal, y: Math.max(2, Math.min(yLine - 8 - MH, H - MH - 2)) };
+        if (!placed) placed = { x: ideal, y: Math.max(plotTop + 2, Math.min(yLine - 8 - MH, plotBot - MH - 2)) };
         boxes.push({ x: placed.x, y: placed.y, w: mw, h: MH, label: m.label, mint: m.mint, kind: m.kind,
           color: m.color, text: m.text, name: m.name, logo: m.logo, link: m.link });
       });
@@ -122,53 +137,149 @@
     }
     function draw(p, markAlpha) {
       const { ctx, w, h } = setup(canvas, H);
-      const top = 64, bot = h - 12;
+      const plotL = left, plotR = Math.max(left + 10, w - right), plotTop = top, plotBot = h - botPad;
+      const plotW = plotR - plotL, plotH = plotBot - plotTop;
       if (pts.length === 0) {
-        ctx.setLineDash([3, 5]); ctx.strokeStyle = C.ter; ctx.lineWidth = 1;
-        ctx.beginPath(); ctx.moveTo(0, (top + bot) / 2); ctx.lineTo(w, (top + bot) / 2); ctx.stroke(); ctx.setLineDash([]);
-        return { ctx, w, X: () => 0, yAt: () => (top + bot) / 2 };
+        ctx.fillStyle = C.sec;
+        ctx.font = "600 13px " + FONT;
+        ctx.textAlign = "center"; ctx.textBaseline = "middle";
+        ctx.fillText(emptyText, w / 2, h / 2);
+        ctx.textAlign = "left";
+        return { ctx, w, plotL, plotR, plotTop, plotBot, X: () => plotL, yAt: () => (plotTop + plotBot) / 2, empty: true };
       }
-      const vals = pts.map(q => q[1]).concat(data.start != null ? [data.start] : []);
+      const vals = pts.map(q => q[1]).concat(data.start != null && isFinite(data.start) ? [data.start] : []);
       let lo = Math.min(...vals), hi = Math.max(...vals);
-      if (hi - lo < 1e-9) { hi += 1; lo -= 1; }
+      if (!isFinite(lo) || !isFinite(hi)) {
+        ctx.fillStyle = C.sec; ctx.font = "600 13px " + FONT;
+        ctx.textAlign = "center"; ctx.textBaseline = "middle";
+        ctx.fillText(emptyText, w / 2, h / 2);
+        ctx.textAlign = "left";
+        return { ctx, w, plotL, plotR, plotTop, plotBot, X: () => plotL, yAt: () => (plotTop + plotBot) / 2, empty: true };
+      }
+      if (hi - lo < 1e-12) { const pad = Math.max(Math.abs(hi) * 0.02, 1e-6); hi += pad; lo -= pad; }
       const pad = (hi - lo) * 0.12; lo -= pad; hi += pad;
       const t0 = pts[0][0], t1 = pts[pts.length - 1][0] || t0 + 1;
-      const X = t => pts.length === 1 ? w / 2 : (t - t0) / ((t1 - t0) || 1) * w;
-      const Y = v => bot - (v - lo) / (hi - lo) * (bot - top);
+      const span = Math.max(1, t1 - t0);
+      const X = t => plotL + (pts.length === 1 ? plotW / 2 : (t - t0) / span * plotW);
+      const Y = v => plotBot - (v - lo) / (hi - lo) * plotH;
       let xy = pts.map(q => [X(q[0]), Y(q[1])]);
       if (grow && p < 1 && xy.length > 1) {
         const a = xy[xy.length - 2], b = xy[xy.length - 1];
         xy[xy.length - 1] = [a[0] + (b[0] - a[0]) * p, a[1] + (b[1] - a[1]) * p];
       }
-      if (data.start != null) {
-        ctx.setLineDash([3, 5]); ctx.strokeStyle = C.ter; ctx.lineWidth = 1;
-        ctx.beginPath(); ctx.moveTo(0, Y(data.start)); ctx.lineTo(w, Y(data.start)); ctx.stroke(); ctx.setLineDash([]);
+      // axes
+      ctx.strokeStyle = C.sep; ctx.lineWidth = 1;
+      ctx.beginPath(); ctx.moveTo(plotL, plotBot); ctx.lineTo(plotR, plotBot); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(plotR, plotTop); ctx.lineTo(plotR, plotBot); ctx.stroke();
+      ctx.fillStyle = C.sec; ctx.font = "500 10px " + FONT;
+      ctx.textAlign = "left"; ctx.textBaseline = "top";
+      const yTicks = (typeof niceTicks === "function" ? niceTicks(lo, hi, 4) : [lo, hi]);
+      yTicks.forEach(v => {
+        const y = Y(v);
+        if (y < plotTop - 1 || y > plotBot + 1) return;
+        ctx.strokeStyle = C.sep; ctx.globalAlpha = 0.45;
+        ctx.beginPath(); ctx.moveTo(plotL, Math.round(y) + 0.5); ctx.lineTo(plotR, Math.round(y) + 0.5); ctx.stroke();
+        ctx.globalAlpha = 1;
+        ctx.fillStyle = C.sec; ctx.textAlign = "left"; ctx.textBaseline = "middle";
+        ctx.fillText(fmt(v), plotR + 6, y);
+      });
+      ctx.textAlign = "center"; ctx.textBaseline = "top";
+      const xCount = span > 3 * 86400000 ? 4 : 5;
+      for (let i = 0; i < xCount; i++) {
+        const ts = t0 + span * (i / (xCount - 1));
+        const x = X(ts);
+        ctx.fillStyle = C.sec;
+        ctx.fillText(fmtTime(ts, span), x, plotBot + 6);
       }
-      const g = ctx.createLinearGradient(0, top, 0, bot);
+      if (data.start != null && isFinite(data.start)) {
+        ctx.setLineDash([3, 5]); ctx.strokeStyle = C.ter; ctx.lineWidth = 1;
+        ctx.beginPath(); ctx.moveTo(plotL, Y(data.start)); ctx.lineTo(plotR, Y(data.start)); ctx.stroke(); ctx.setLineDash([]);
+      }
+      const g = ctx.createLinearGradient(0, plotTop, 0, plotBot);
       g.addColorStop(0, rgba(C.green, 0.28)); g.addColorStop(1, rgba(C.green, 0));
-      ctx.beginPath(); ctx.moveTo(xy[0][0], bot);
-      xy.forEach(q => ctx.lineTo(q[0], q[1])); ctx.lineTo(xy[xy.length - 1][0], bot); ctx.closePath();
+      ctx.beginPath(); ctx.moveTo(xy[0][0], plotBot);
+      xy.forEach(q => ctx.lineTo(q[0], q[1])); ctx.lineTo(xy[xy.length - 1][0], plotBot); ctx.closePath();
       ctx.fillStyle = g; ctx.fill();
       ctx.beginPath(); xy.forEach((q, i) => i ? ctx.lineTo(q[0], q[1]) : ctx.moveTo(q[0], q[1]));
       ctx.strokeStyle = C.green; ctx.lineWidth = 2; ctx.lineJoin = "round"; ctx.stroke();
       const last = xy[xy.length - 1];
       ctx.beginPath(); ctx.arc(last[0], last[1], 4, 0, Math.PI * 2); ctx.fillStyle = C.green; ctx.fill();
       const yAt = x => { let best = xy[0]; for (const q of xy) if (Math.abs(q[0] - x) < Math.abs(best[0] - x)) best = q; return best[1]; };
-      marks.map(m => ({ ...m, x: X(Date.parse(m.ts)) })).filter(m => m.x >= -1 && m.x <= w + 1)
+      const valAt = x => { let best = 0; for (let i = 0; i < xy.length; i++) if (Math.abs(xy[i][0] - x) < Math.abs(xy[best][0] - x)) best = i; return pts[best]; };
+      marks.map(m => ({ ...m, x: X(Date.parse(m.ts)) })).filter(m => m.x >= plotL - 1 && m.x <= plotR + 1)
         .forEach((m, i) => {
           const col = { blue: C.blue, green: C.green, red: C.red }[m.color] || C.blue;
           ctx.globalAlpha = i >= prevMarks ? markAlpha : 1;
           ctx.beginPath(); ctx.arc(m.x, yAt(m.x), 3, 0, Math.PI * 2); ctx.fillStyle = col; ctx.fill();
           ctx.globalAlpha = 1;
         });
-      return { ctx, w, X, yAt };
+      return { ctx, w, plotL, plotR, plotTop, plotBot, X, yAt, valAt, empty: false };
     }
     const geo = draw(1, 1);
-    const items = pts.length && geo ? layoutMarks(geo.ctx, geo.w, geo.X, geo.yAt) : [];
+    const items = pts.length && geo && !geo.empty ? layoutMarks(geo.ctx, geo.w, geo.plotL, geo.plotR, geo.plotTop, geo.plotBot, geo.X, geo.yAt) : [];
     if (typeof data.onMarks === "function") data.onMarks(items);
     if (grow || marks.length > prevMarks) {
       anim(250, p => draw(p, Math.min(1, p * 250 / 200)));
     }
+    // Touch / drag crosshair (iPhone + mouse). Shows balance + time at the closest point.
+    if (!canvas._scrubBound) {
+      canvas._scrubBound = true;
+      const tip = () => {
+        let el = canvas.parentNode && canvas.parentNode.querySelector(".chartscrub");
+        if (!el && canvas.parentNode) {
+          el = document.createElement("div");
+          el.className = "chartscrub";
+          el.setAttribute("aria-live", "polite");
+          canvas.parentNode.appendChild(el);
+        }
+        return el;
+      };
+      const hide = () => { const el = tip(); if (el) el.classList.remove("on"); canvas._scrub = null; if (canvas._draw) canvas._draw(); };
+      const move = ev => {
+        const rect = canvas.getBoundingClientRect();
+        const src = (ev.touches && ev.touches[0]) || ev;
+        if (!src) return;
+        const x = src.clientX - rect.left;
+        canvas._scrub = { x };
+        if (canvas._draw) canvas._draw();
+        const g = canvas._geo;
+        if (!g || g.empty || !g.valAt) { hide(); return; }
+        const pt = g.valAt(Math.max(g.plotL, Math.min(g.plotR, x)));
+        if (!pt) { hide(); return; }
+        const el = tip();
+        if (!el) return;
+        const when = fmtTime(pt[0], Math.max(1, (pts[pts.length - 1] || [])[0] - (pts[0] || [])[0]));
+        el.innerHTML = `<b>${fmt(pt[1])}</b><span>${when}${unit ? " · " + unit : ""}</span>`;
+        const leftPx = Math.max(8, Math.min(rect.width - 140, (g.X(pt[0]) - 70)));
+        el.style.left = leftPx + "px";
+        el.classList.add("on");
+      };
+      canvas.addEventListener("pointerdown", e => { canvas.setPointerCapture && canvas.setPointerCapture(e.pointerId); move(e); });
+      canvas.addEventListener("pointermove", e => { if (canvas._scrub || (e.buttons & 1)) move(e); });
+      canvas.addEventListener("pointerup", hide);
+      canvas.addEventListener("pointerleave", hide);
+      canvas.addEventListener("touchstart", e => { e.preventDefault(); move(e); }, { passive: false });
+      canvas.addEventListener("touchmove", e => { e.preventDefault(); move(e); }, { passive: false });
+      canvas.addEventListener("touchend", hide);
+    }
+    canvas._geo = geo;
+    canvas._draw = () => {
+      const g2 = draw(1, 1);
+      canvas._geo = g2;
+      if (canvas._scrub && g2 && !g2.empty) {
+        const x = Math.max(g2.plotL, Math.min(g2.plotR, canvas._scrub.x));
+        const { ctx } = g2;
+        ctx.save();
+        ctx.strokeStyle = C.sec; ctx.lineWidth = 1; ctx.setLineDash([4, 3]);
+        ctx.beginPath(); ctx.moveTo(x + 0.5, g2.plotTop); ctx.lineTo(x + 0.5, g2.plotBot); ctx.stroke();
+        const y = g2.yAt(x);
+        ctx.beginPath(); ctx.moveTo(g2.plotL, y + 0.5); ctx.lineTo(g2.plotR, y + 0.5); ctx.stroke();
+        ctx.setLineDash([]);
+        ctx.beginPath(); ctx.arc(x, y, 5, 0, Math.PI * 2); ctx.fillStyle = C.text; ctx.fill();
+        ctx.restore();
+      }
+    };
+    if (canvas._scrub) canvas._draw();
     return { len: pts.length, marks: marks.length };
   }
 

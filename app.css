@@ -1328,3 +1328,11 @@ html[data-theme="daylight"] .cd.dn .dn1,html[data-theme="daylight"] .cd.dn .dv{c
 .pumpcard .pill.ok{color:var(--green)}
 .pumpcard .pill.bad{color:var(--red)}
 .pumpcard .pill.warn{color:var(--orange)}
+
+/* v60 balance-chart scrubber + strategy promo */
+.chartwrap{position:relative;touch-action:none}
+.chartscrub{position:absolute;top:8px;left:8px;min-width:120px;max-width:70%;padding:6px 8px;border-radius:10px;background:var(--card2);color:var(--text);font-size:12px;font-weight:650;opacity:0;pointer-events:none;z-index:3;box-shadow:0 4px 16px rgba(0,0,0,.25)}
+.chartscrub.on{opacity:1}
+.chartscrub span{display:block;margin-top:2px;color:var(--sec);font-size:11px;font-weight:500}
+.stratpromo,.copylat{margin-top:4px;font-size:11px;line-height:1.35;color:var(--sec);white-space:normal}
+.copylat b{font-weight:700;color:var(--text)}
