@@ -1334,5 +1334,8 @@ html[data-theme="daylight"] .cd.dn .dn1,html[data-theme="daylight"] .cd.dn .dv{c
 .chartscrub{position:absolute;top:8px;left:8px;min-width:120px;max-width:70%;padding:6px 8px;border-radius:10px;background:var(--card2);color:var(--text);font-size:12px;font-weight:650;opacity:0;pointer-events:none;z-index:3;box-shadow:0 4px 16px rgba(0,0,0,.25)}
 .chartscrub.on{opacity:1}
 .chartscrub span{display:block;margin-top:2px;color:var(--sec);font-size:11px;font-weight:500}
+.chartscrub .fill{display:flex;align-items:center;gap:6px;margin-top:4px;color:var(--text);font-size:11px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.chartscrub .fill .lg{width:16px;height:16px;border-radius:8px;flex:0 0 16px;object-fit:cover}
+
 .stratpromo,.copylat{margin-top:4px;font-size:11px;line-height:1.35;color:var(--sec);white-space:normal}
 .copylat b{font-weight:700;color:var(--text)}

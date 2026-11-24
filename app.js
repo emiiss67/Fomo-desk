@@ -9,7 +9,7 @@
   const SHOT = !!QS.get("shot");                             // one-shot render, no poll loop
   if (LOCAL) { const b = QS.get("book"); if (b) try { window.__seedBook = b; } catch (e) {} }
   const POLL_VISIBLE_S = 1, POLL_HIDDEN_S = 15, POLL_S = POLL_VISIBLE_S, MAX_BACKOFF = 60;
-  const APP_VERSION = "v61";   // bump with every app release (also index.html ?v= and sw.js CACHE)
+  const APP_VERSION = "v62";   // bump with every app release (also index.html ?v= and sw.js CACHE)
   const AGENTS = ["scanner", "auditor", "analyst", "executor", "risk"];
   const TITLE = { scanner: "Scanner", auditor: "Auditor", analyst: "Analyst", executor: "Executor", risk: "Risk", autobot: "Auto bot" };
   const agentTitle = a => (a && TITLE[a.name]) || (a && a.name) || "—";
@@ -3503,7 +3503,7 @@
   if ("serviceWorker" in navigator && !LOCAL) {
     let swReload = false;
     navigator.serviceWorker.addEventListener("controllerchange", () => { if (swReload) return; swReload = true; location.reload(); });
-    navigator.serviceWorker.register("sw.js?v=61", { updateViaCache: "none" }).then(reg => { try { reg.update(); } catch (e) {} }).catch(() => {});
+    navigator.serviceWorker.register("sw.js?v=62", { updateViaCache: "none" }).then(reg => { try { reg.update(); } catch (e) {} }).catch(() => {});
   }
   render();
   if (BASE) poll();

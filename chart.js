@@ -72,10 +72,13 @@
   }
 
   /* Home line: points [[iso, value]], marks [{ts, text, color, kind, mint, label}], start = night start value.
-     Dots stay on the canvas; compact icon chips are laid out and handed to data.onMarks. */
+     Y-domain comes from the line (and start) only, never from markers, and never below 0.
+     Dots (green buy, red sell) sit on the line; labels only when fewer than 8 fills are
+     visible, otherwise on scrubber hover/tap for the nearest fill. Dots closer than 12px cluster. */
   function line(canvas, data, prev) {
     const C = themeC();
-    const pts = (data.points || []).map(p => [Date.parse(p[0]), p[1]]).filter(p => isFinite(p[0]) && p[1] != null && isFinite(p[1]));
+    const pts = (data.points || []).map(p => [Date.parse(p[0]), p[1]])
+      .filter(p => isFinite(p[0]) && p[1] != null && isFinite(p[1]) && p[1] >= 0);
     const marks = data.marks || [];
     const H = 220;
     const left = 8, right = 56, top = 16, botPad = 26;
@@ -85,12 +88,21 @@
     const unit = data.unit || "";
     const emptyText = data.emptyText || "No balance history for this range";
     const tz = data.tz || "Europe/Vilnius";
+    const LABEL_MAX = 8;
+    const CLUSTER_PX = 12;
+    const SCRUB_NEAR = 24;
     function shortLabel(m) {
       if (m.label) return m.label;
       if (m.kind === "bought" || /^Bought /i.test(m.text || "")) {
         return (m.sizeUsd != null && isFinite(m.sizeUsd)) ? "Buy $" + Number(m.sizeUsd).toFixed(2) : "Buy";
       }
       return m.text || "";
+    }
+    function isBuy(m) {
+      return m && (m.kind === "bought" || m.color === "blue");
+    }
+    function markColor(m) {
+      return isBuy(m) ? C.green : C.red;
     }
     function fmtTime(ms, span) {
       if (!isFinite(ms)) return "";
@@ -102,18 +114,33 @@
           : { timeZone: tz, hour: "2-digit", minute: "2-digit", hour12: false };
       try { return d.toLocaleString("en-GB", opt); } catch (e) { return d.toISOString().slice(11, 16); }
     }
-    function layoutMarks(ctx, w, plotL, plotR, plotTop, plotBot, X, yAt) {
+    function visibleMarks(X, plotL, plotR) {
+      return marks.map(m => ({ ...m, x: X(Date.parse(m.ts)), label: shortLabel(m) }))
+        .filter(m => isFinite(m.x) && m.x >= plotL - 1 && m.x <= plotR + 1)
+        .sort((a, b) => a.x - b.x);
+    }
+    function clusterMarks(vis) {
+      const clusters = [];
+      vis.forEach(m => {
+        const last = clusters[clusters.length - 1];
+        if (last && (m.x - last.x) < CLUSTER_PX) {
+          last.items.push(m);
+          last.x = last.items.reduce((s, it) => s + it.x, 0) / last.items.length;
+        } else {
+          clusters.push({ x: m.x, items: [m] });
+        }
+      });
+      return clusters;
+    }
+    function layoutMarks(ctx, w, plotL, plotR, plotTop, plotBot, X, yAt, vis) {
       const MH = 22, GAP = 4, ICON = 16;
       ctx.font = "600 11px " + FONT;
-      const vis = marks.map(m => ({ ...m, x: X(Date.parse(m.ts)), label: shortLabel(m) }))
-        .filter(m => m.x >= plotL - 8 && m.x <= plotR + 8)
-        .sort((a, b) => a.x - b.x);
       const boxes = [];
       const fits = (x, y, mw) => {
         if (y < plotTop || y + MH > plotBot || x < plotL || x + mw > plotR) return false;
         return boxes.every(b => x + mw + GAP <= b.x || b.x + b.w + GAP <= x || y + MH + 2 <= b.y || b.y + b.h + 2 <= y);
       };
-      const nudges = [0, -10, 10, -20, 20, -32, 32, -46, 46, -60, 60];
+      const nudges = [0, -10, 10, -20, 20, -32, 32, -46, 46];
       vis.forEach(m => {
         const tw = ctx.measureText(m.label).width;
         const mw = Math.ceil(3 + ICON + 4 + tw + 7);
@@ -121,17 +148,18 @@
         const yLine = yAt(m.x);
         let placed = null;
         const tryPos = (x, y) => { if (!placed && fits(x, y, mw)) placed = { x, y }; };
-        for (let r = 0; r < 6 && !placed; r++) {
+        for (let r = 0; r < 4 && !placed; r++) {
           const y = yLine - 8 - MH - r * (MH + GAP);
           for (const d of nudges) tryPos(Math.min(Math.max(ideal + d, plotL), Math.max(plotL, plotR - mw)), y);
         }
-        for (let r = 0; r < 6 && !placed; r++) {
+        for (let r = 0; r < 3 && !placed; r++) {
           const y = yLine + 8 + r * (MH + GAP);
           for (const d of nudges) tryPos(Math.min(Math.max(ideal + d, plotL), Math.max(plotL, plotR - mw)), y);
         }
-        if (!placed) placed = { x: ideal, y: Math.max(plotTop + 2, Math.min(yLine - 8 - MH, plotBot - MH - 2)) };
+        // If it will not fit without covering the line, skip the pill — the dot stays.
+        if (!placed) return;
         boxes.push({ x: placed.x, y: placed.y, w: mw, h: MH, label: m.label, mint: m.mint, kind: m.kind,
-          color: m.color, text: m.text, name: m.name, logo: m.logo, link: m.link });
+          color: isBuy(m) ? "green" : "red", text: m.text, name: m.name, logo: m.logo, link: m.link });
       });
       return boxes;
     }
@@ -147,7 +175,7 @@
         ctx.textAlign = "left";
         return { ctx, w, plotL, plotR, plotTop, plotBot, X: () => plotL, yAt: () => (plotTop + plotBot) / 2, empty: true };
       }
-      const vals = pts.map(q => q[1]).concat(data.start != null && isFinite(data.start) ? [data.start] : []);
+      const vals = pts.map(q => q[1]).concat(data.start != null && isFinite(data.start) && data.start >= 0 ? [data.start] : []);
       let lo = Math.min(...vals), hi = Math.max(...vals);
       if (!isFinite(lo) || !isFinite(hi)) {
         ctx.fillStyle = C.sec; ctx.font = "600 13px " + FONT;
@@ -156,8 +184,16 @@
         ctx.textAlign = "left";
         return { ctx, w, plotL, plotR, plotTop, plotBot, X: () => plotL, yAt: () => (plotTop + plotBot) / 2, empty: true };
       }
-      if (hi - lo < 1e-12) { const pad = Math.max(Math.abs(hi) * 0.02, 1e-6); hi += pad; lo -= pad; }
-      const pad = (hi - lo) * 0.12; lo -= pad; hi += pad;
+      if (hi - lo < 1e-12) {
+        const pad = Math.max(Math.abs(hi) * 0.02, 1e-6);
+        hi += pad; lo -= pad;
+      } else {
+        const pad = (hi - lo) * 0.12;
+        lo -= pad; hi += pad;
+      }
+      // Wallet / book value cannot be negative; domain comes from the line only.
+      if (lo < 0) lo = 0;
+      if (hi <= lo) hi = lo + Math.max(Math.abs(lo) * 0.02, 1e-6);
       const t0 = pts[0][0], t1 = pts[pts.length - 1][0] || t0 + 1;
       const span = Math.max(1, t1 - t0);
       const X = t => plotL + (pts.length === 1 ? plotW / 2 : (t - t0) / span * plotW);
@@ -191,7 +227,7 @@
         ctx.fillStyle = C.sec;
         ctx.fillText(fmtTime(ts, span), x, plotBot + 6);
       }
-      if (data.start != null && isFinite(data.start)) {
+      if (data.start != null && isFinite(data.start) && data.start >= 0) {
         ctx.setLineDash([3, 5]); ctx.strokeStyle = C.ter; ctx.lineWidth = 1;
         ctx.beginPath(); ctx.moveTo(plotL, Y(data.start)); ctx.lineTo(plotR, Y(data.start)); ctx.stroke(); ctx.setLineDash([]);
       }
@@ -206,22 +242,43 @@
       ctx.beginPath(); ctx.arc(last[0], last[1], 4, 0, Math.PI * 2); ctx.fillStyle = C.green; ctx.fill();
       const yAt = x => { let best = xy[0]; for (const q of xy) if (Math.abs(q[0] - x) < Math.abs(best[0] - x)) best = q; return best[1]; };
       const valAt = x => { let best = 0; for (let i = 0; i < xy.length; i++) if (Math.abs(xy[i][0] - x) < Math.abs(xy[best][0] - x)) best = i; return pts[best]; };
-      marks.map(m => ({ ...m, x: X(Date.parse(m.ts)) })).filter(m => m.x >= plotL - 1 && m.x <= plotR + 1)
-        .forEach((m, i) => {
-          const col = { blue: C.blue, green: C.green, red: C.red }[m.color] || C.blue;
-          ctx.globalAlpha = i >= prevMarks ? markAlpha : 1;
-          ctx.beginPath(); ctx.arc(m.x, yAt(m.x), 3, 0, Math.PI * 2); ctx.fillStyle = col; ctx.fill();
-          ctx.globalAlpha = 1;
-        });
-      return { ctx, w, plotL, plotR, plotTop, plotBot, X, yAt, valAt, empty: false };
+      const vis = visibleMarks(X, plotL, plotR);
+      const clusters = clusterMarks(vis);
+      clusters.forEach((c, i) => {
+        const y = yAt(c.x);
+        const n = c.items.length;
+        const allBuy = c.items.every(isBuy);
+        const allSell = c.items.every(m => !isBuy(m));
+        const col = allBuy ? C.green : allSell ? C.red : C.text;
+        ctx.globalAlpha = i >= prevMarks ? markAlpha : 1;
+        ctx.beginPath();
+        ctx.arc(c.x, y, n > 1 ? 7 : 3.5, 0, Math.PI * 2);
+        ctx.fillStyle = col;
+        ctx.fill();
+        if (n > 1) {
+          ctx.strokeStyle = C.bg || "#0b0b0f";
+          ctx.lineWidth = 1.5;
+          ctx.stroke();
+          ctx.fillStyle = "#fff";
+          ctx.font = "700 9px " + FONT;
+          ctx.textAlign = "center";
+          ctx.textBaseline = "middle";
+          ctx.fillText(n > 99 ? "99+" : String(n), c.x, y + 0.5);
+        }
+        ctx.globalAlpha = 1;
+      });
+      return { ctx, w, plotL, plotR, plotTop, plotBot, X, yAt, valAt, empty: false, vis, clusters };
     }
     const geo = draw(1, 1);
-    const items = pts.length && geo && !geo.empty ? layoutMarks(geo.ctx, geo.w, geo.plotL, geo.plotR, geo.plotTop, geo.plotBot, geo.X, geo.yAt) : [];
+    const vis = (geo && geo.vis) || [];
+    const items = pts.length && geo && !geo.empty && vis.length > 0 && vis.length < LABEL_MAX
+      ? layoutMarks(geo.ctx, geo.w, geo.plotL, geo.plotR, geo.plotTop, geo.plotBot, geo.X, geo.yAt, vis)
+      : [];
     if (typeof data.onMarks === "function") data.onMarks(items);
     if (grow || marks.length > prevMarks) {
       anim(250, p => draw(p, Math.min(1, p * 250 / 200)));
     }
-    // Touch / drag crosshair (iPhone + mouse). Shows balance + time at the closest point.
+    // Touch / drag crosshair (iPhone + mouse). Shows balance + time, and the nearest fill.
     if (!canvas._scrubBound) {
       canvas._scrubBound = true;
       const tip = () => {
@@ -235,6 +292,21 @@
         return el;
       };
       const hide = () => { const el = tip(); if (el) el.classList.remove("on"); canvas._scrub = null; if (canvas._draw) canvas._draw(); };
+      const fillHtml = (g, x) => {
+        const vis = (g && g.vis) || [];
+        if (!vis.length) return "";
+        let best = vis[0], bestD = Math.abs(vis[0].x - x);
+        for (let i = 1; i < vis.length; i++) {
+          const d = Math.abs(vis[i].x - x);
+          if (d < bestD) { bestD = d; best = vis[i]; }
+        }
+        if (bestD > SCRUB_NEAR) return "";
+        const lab = best.label || best.text || "";
+        const name = best.name || "";
+        const logo = best.logo ? `<img class="lg" src="${best.logo}" alt="" width="16" height="16">` : "";
+        const bits = [name, lab].filter(Boolean).join(" · ");
+        return bits ? `<span class="fill">${logo}${bits}</span>` : "";
+      };
       const move = ev => {
         const rect = canvas.getBoundingClientRect();
         const src = (ev.touches && ev.touches[0]) || ev;
@@ -244,12 +316,13 @@
         if (canvas._draw) canvas._draw();
         const g = canvas._geo;
         if (!g || g.empty || !g.valAt) { hide(); return; }
-        const pt = g.valAt(Math.max(g.plotL, Math.min(g.plotR, x)));
+        const px = Math.max(g.plotL, Math.min(g.plotR, x));
+        const pt = g.valAt(px);
         if (!pt) { hide(); return; }
         const el = tip();
         if (!el) return;
         const when = fmtTime(pt[0], Math.max(1, (pts[pts.length - 1] || [])[0] - (pts[0] || [])[0]));
-        el.innerHTML = `<b>${fmt(pt[1])}</b><span>${when}${unit ? " · " + unit : ""}</span>`;
+        el.innerHTML = `<b>${fmt(pt[1])}</b><span>${when}${unit ? " · " + unit : ""}</span>${fillHtml(g, px)}`;
         const leftPx = Math.max(8, Math.min(rect.width - 140, (g.X(pt[0]) - 70)));
         el.style.left = leftPx + "px";
         el.classList.add("on");
