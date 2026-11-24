@@ -7,7 +7,7 @@
   const QS = new URLSearchParams(location.search);
   const FIXTURE = LOCAL ? QS.get("fixture") : null;          // local screenshots only
   const POLL_VISIBLE_S = 1, POLL_HIDDEN_S = 15, POLL_S = POLL_VISIBLE_S, MAX_BACKOFF = 60;
-  const APP_VERSION = "v57";   // bump with every app release (also index.html ?v= and sw.js CACHE)
+  const APP_VERSION = "v58";   // bump with every app release (also index.html ?v= and sw.js CACHE)
   const AGENTS = ["scanner", "auditor", "analyst", "executor", "risk"];
   const TITLE = { scanner: "Scanner", auditor: "Auditor", analyst: "Analyst", executor: "Executor", risk: "Risk" };
   const COLOR = { scanner: "cyan", auditor: "", analyst: "yellow", executor: "green", risk: "pink" };
@@ -47,7 +47,7 @@
 
   const S = { tf: {}, chartOff: {}, chartSlot: 9, state: null, chart: null, account: null, activity: [], coin: {}, audit: {}, scan: {}, decisions: {},
               reports: null, report: {}, missing: {}, err: false, lastGood: null, next: 0, range: "LIVE", search: "", showSearch: false,
-              tpDraft: {}, tpPart: {}, slDraft: {}, slPart: {}, lineDraft: {}, book: null };
+              tpDraft: {}, tpPart: {}, slDraft: {}, slPart: {}, lineDraft: {}, book: null, strategies: null, stratMissing: false, stratBusy: null };
   const view = document.getElementById("view"), offline = document.getElementById("offline");
   let chartPrev = null, odoPrev = null, beam = {}, execAnim = null;
 
@@ -747,6 +747,9 @@
       await getOpt(`reports/${r.arg}.json`, S.report, r.arg);
     if (r.name === "scan" && r.arg && (ch(`scan/${r.arg}.json`) || !S.scan[r.arg]))
       await getOpt(`scan/${r.arg}.json`, S.scan, r.arg);
+    if (r.name === "strategies" && (ch("strategies.json") || !S.strategies)) {
+      try { S.strategies = await get("strategies.json"); S.stratMissing = false; } catch (e) { if (e.status) S.stratMissing = true; else throw e; }
+    }
   }
   function pollDelayS() { return document.hidden ? POLL_HIDDEN_S : POLL_VISIBLE_S; }
   let pollTimer = null, pollInFlight = false, pollAgain = false;
@@ -782,6 +785,9 @@
         }
         if (first || need("desk.json") || !S.desk) {
           try { S.desk = await get("desk.json"); S.deskMissing = false; } catch (e) { if (e.status) S.deskMissing = true; else throw e; }
+        }
+        if (first || need("strategies.json") || !S.strategies) {
+          try { S.strategies = await get("strategies.json"); S.stratMissing = false; } catch (e) { if (e.status) S.stratMissing = true; else throw e; }
         }
         S.chart = chart; S.account = account;
         if (S.activity[0] !== act) S.activity = [act];
@@ -3200,7 +3206,78 @@
     } };
   }
 
+
+  // ---------- v58 Strategies tab: per-bot legs with on/off, W/L, P&L and trade count ----------
+  function fmtSol(v, signed) {
+    if (v == null || !isFinite(v)) return "—";
+    const n = Number(v);
+    const body = n.toFixed(4) + " SOL";
+    return signed && n > 0 ? "+" + body : body;
+  }
+  function stratPnl(s) {
+    if (!s) return { txt: "—", cls: "" };
+    if (s.unit === "USD" || s.pnl_usd != null && s.pnl_sol == null) {
+      const v = s.pnl_usd;
+      return { txt: moneyS(v), cls: v == null ? "" : v >= 0 ? "green" : "red" };
+    }
+    const v = s.pnl_sol;
+    return { txt: fmtSol(v, true), cls: v == null ? "" : v >= 0 ? "green" : "red" };
+  }
+  async function toggleStrategy(bot, id, on) {
+    const key = bot + ":" + id;
+    if (S.stratBusy) return;
+    S.stratBusy = key;
+    const books = (S.strategies && S.strategies.books) || [];
+    let prev = null;
+    for (const b of books) for (const s of (b.strategies || [])) if (b.id === bot && s.id === id) { prev = s.enabled; s.enabled = on; }
+    render();
+    try {
+      await deskRequest({ action: "strategy_toggle", bot, strategy: id, enabled: on, ts: Date.now() });
+    } catch (e) {
+      for (const b of books) for (const s of (b.strategies || [])) if (b.id === bot && s.id === id) s.enabled = prev;
+      toast(e && e.message === "token" ? "Sign in from Telegram to change strategies" : "Couldn’t change that strategy");
+    }
+    try { S.strategies = await get("strategies.json"); S.stratMissing = false; } catch (e) {}
+    S.stratBusy = null;
+    render();
+  }
+  function strategiesTab() {
+    const body = S.strategies;
+    if (!body) return navbar() + `<div class="gut" style="margin-top:12px">${S.stratMissing ? '<div class="list"><div class="empty">The desk hasn’t published strategies.json yet</div></div>' : sk(420, null, "border-radius:14px")}</div>`;
+    const books = body.books || [];
+    const blocks = books.map(book => {
+      const rows = (book.strategies || []).map(s => {
+        const pnl = stratPnl(s);
+        const wr = s.trades ? Math.round(100 * (s.wins || 0) / s.trades) + "%" : "—";
+        const on = !!s.enabled;
+        const busy = S.stratBusy === book.id + ":" + s.id;
+        return `<div class="stratrow">
+          <div class="stratmain">
+            <div class="t">${esc(s.label)}</div>
+            ${s.blurb ? `<div class="s">${esc(s.blurb)}</div>` : ""}
+            <div class="stratstats">
+              <span>W/L <b>${esc((s.wins || 0) + "/" + (s.losses || 0))}</b>${s.trades ? " · " + esc(wr) : ""}</span>
+              <span>P&amp;L <b class="${pnl.cls}">${esc(pnl.txt)}</b></span>
+              <span>${esc(String(s.trades || 0))} trades</span>
+            </div>
+          </div>
+          <span class="swwrap" data-bot="${esc(book.id)}" data-id="${esc(s.id)}" data-on="${on ? "0" : "1"}" role="switch" aria-checked="${on ? "true" : "false"}" aria-label="${esc(s.label)}">
+            <span class="switch ${on ? "on" : ""} ${busy ? "locked" : ""}"></span>
+          </span>
+        </div>`;
+      }).join("");
+      return `<div class="stratbook"><h2>${esc(book.label)}</h2><div class="list">${rows || '<div class="empty">No strategies</div>'}</div></div>`;
+    }).join("");
+    const after = () => {
+      view.querySelectorAll(".swwrap[data-bot]").forEach(el => {
+        el.onclick = () => toggleStrategy(el.dataset.bot, el.dataset.id, el.dataset.on === "1");
+      });
+    };
+    return { html: navbar() + `<div class="gut" style="margin-top:4px"><div class="s wrap">Toggles only turn a leg on or off. Hard checks, the 18% stop and the 50% daily stop stay as they are. Copy trade is paper only and never spends SOL.</div></div>` + blocks, after };
+  }
+
   function render() {
+
     tickOffline();
     if (document.querySelector("canvas.inspecting, canvas.linedrag, canvas.holding")) return;
     if (document.activeElement && ["tpin", "slin", "bottpin", "botslin", "scanin", "scanpct"].includes(document.activeElement.id)) return;
@@ -3211,6 +3288,7 @@
     if (ind && on >= 0) ind.style.transform = `translateX(${on * 100}%)`;
     if (!BASE) { if (!document.getElementById("gb")) { view.innerHTML = gate(); bindGate(); } document.getElementById("tabbar").hidden = true; return; }
     const out = r.name === "bot" && r.arg ? botPosScreen(decodeURIComponent(r.arg)) : r.name === "bot" ? botTab()
+      : r.name === "strategies" ? strategiesTab()
       : r.name === "desk" ? deskTab() : r.name === "agents" ? agentsTab() : r.name === "activity" ? activityTab() : r.name === "account" ? accountTab()
       : r.name === "coin" && r.arg ? coinScreen(decodeURIComponent(r.arg)) : r.name === "audit" ? auditScreen(r.arg && decodeURIComponent(r.arg))
       : r.name === "scan" ? scanScreen(r.arg && decodeURIComponent(r.arg))
@@ -3276,7 +3354,7 @@
   if ("serviceWorker" in navigator && !LOCAL) {
     let swReload = false;
     navigator.serviceWorker.addEventListener("controllerchange", () => { if (swReload) return; swReload = true; location.reload(); });
-    navigator.serviceWorker.register("sw.js?v=57", { updateViaCache: "none" }).then(reg => { try { reg.update(); } catch (e) {} }).catch(() => {});
+    navigator.serviceWorker.register("sw.js?v=58", { updateViaCache: "none" }).then(reg => { try { reg.update(); } catch (e) {} }).catch(() => {});
   }
   render();
   if (BASE) poll();

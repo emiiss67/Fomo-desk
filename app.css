@@ -188,7 +188,7 @@ canvas{display:block;width:100%}
 /* tab bar */
 .tabbar{position:fixed;left:0;right:0;bottom:0;z-index:20;display:flex;height:var(--tab);padding-bottom:env(safe-area-inset-bottom);
   background:rgba(22,22,24,.72);-webkit-backdrop-filter:saturate(180%) blur(20px);backdrop-filter:saturate(180%) blur(20px);border-top:.5px solid var(--sep)}
-.tab{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;font-size:10px;color:var(--ter);min-height:44px}
+.tab{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;font-size:9px;color:var(--ter);min-height:44px;padding:0 1px;text-align:center}
 .tab svg{width:26px;height:26px;fill:none;stroke:currentColor;stroke-width:1.7;stroke-linecap:round;stroke-linejoin:round}
 .tab.on{color:#fff}
 
@@ -350,7 +350,7 @@ button.pricerow{font:inherit;color:inherit;background:none;border:0;padding:0;wi
 .spacer{height:calc(52px + 20px + 40px)}
 /* tab bar: frosted glass + sliding active indicator */
 .tabbar{background:rgba(10,12,16,.62);border-top:1px solid var(--hair)}
-.tabind{position:absolute;top:6px;left:0;width:calc(100% / 6);height:38px;pointer-events:none;transition:transform .45s cubic-bezier(.2,1.3,.4,1);will-change:transform}
+.tabind{position:absolute;top:6px;left:0;width:calc(100% / 7);height:38px;pointer-events:none;transition:transform .45s cubic-bezier(.2,1.3,.4,1);will-change:transform}
 .tabind::before{content:"";position:absolute;left:50%;top:0;width:56px;height:38px;margin-left:-28px;border-radius:19px;background:color-mix(in srgb,var(--accent) 16%,transparent);box-shadow:0 0 18px color-mix(in srgb,var(--accent) 20%,transparent)}
 .tab{position:relative;z-index:1}.tab.on{color:var(--accent)}
 .lg{box-shadow:0 0 0 1px var(--hair)}
@@ -1304,3 +1304,16 @@ html[data-theme="daylight"] .cd.dn .dn1,html[data-theme="daylight"] .cd.dn .dv{c
 .botacts #bothold{min-height:42px;border-radius:12px;font-weight:700}.botacts #bothold.ghost{border:1px solid var(--orange);color:var(--orange)}
 .attsrc{display:inline-block;font-size:10px;font-weight:700;letter-spacing:.02em;padding:1px 6px;margin-left:4px;border-radius:999px;background:rgba(255,176,46,.16);color:var(--orange);vertical-align:2px}
 .attscore{display:inline-block;min-width:30px;text-align:center;font-weight:800;padding:3px 7px;border-radius:10px;background:rgba(255,176,46,.18);color:var(--orange)}
+
+/* v58 Strategies tab */
+.stratbook{margin:16px var(--g) 0}
+.stratbook h2{margin:0 0 8px;font-size:13px;font-weight:700;color:var(--sec);letter-spacing:.04em;text-transform:uppercase}
+.stratrow{display:flex;align-items:flex-start;gap:12px;padding:12px 14px;border-top:.5px solid var(--sep)}
+.stratrow:first-child{border-top:0}
+.stratmain{flex:1;min-width:0}
+.stratrow .t{font-size:16px;font-weight:650}
+.stratrow .s{margin-top:2px;color:var(--sec);font-size:12px;line-height:1.35;white-space:normal}
+.stratstats{display:flex;flex-wrap:nowrap;gap:12px;margin-top:8px;font-size:12px;color:var(--sec)}
+.stratstats span{white-space:nowrap}
+.stratstats b{font-weight:700;color:var(--text)}
+.stratstats .green,.stratstats .red{font-weight:700}
