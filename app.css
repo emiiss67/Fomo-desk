@@ -1339,3 +1339,12 @@ html[data-theme="daylight"] .cd.dn .dn1,html[data-theme="daylight"] .cd.dn .dv{c
 
 .stratpromo,.copylat{margin-top:4px;font-size:11px;line-height:1.35;color:var(--sec);white-space:normal}
 .copylat b{font-weight:700;color:var(--text)}
+
+/* t359u top-up */
+.cmark.gold{color:#ffd60a;background:color-mix(in srgb,#ffd60a 22%,transparent);box-shadow:0 0 0 1px color-mix(in srgb,#ffd60a 28%,transparent)}
+.topup{margin-top:10px;padding-top:10px;border-top:1px solid color-mix(in srgb, currentColor 12%, transparent)}
+.topup-row{display:flex;flex-wrap:wrap;align-items:center;gap:8px}
+.topup-label{font-weight:700}
+.topup-in{display:inline-flex;align-items:center;gap:2px;background:rgba(255,255,255,.06);border-radius:10px;padding:0 8px;height:36px}
+.topup-in input{width:68px;background:transparent;border:0;color:inherit;font:inherit;outline:none}
+.topup-seg{display:inline-flex}

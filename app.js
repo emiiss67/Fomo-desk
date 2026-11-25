@@ -9,7 +9,7 @@
   const SHOT = !!QS.get("shot");                             // one-shot render, no poll loop
   if (LOCAL) { const b = QS.get("book"); if (b) try { window.__seedBook = b; } catch (e) {} }
   const POLL_VISIBLE_S = 1, POLL_HIDDEN_S = 15, POLL_S = POLL_VISIBLE_S, MAX_BACKOFF = 60;
-  const APP_VERSION = "v63";   // bump with every app release (also index.html ?v= and sw.js CACHE)
+  const APP_VERSION = "v64";   // bump with every app release (also index.html ?v= and sw.js CACHE)
   const AGENTS = ["scanner", "auditor", "analyst", "executor", "risk"];
   const TITLE = { scanner: "Scanner", auditor: "Auditor", analyst: "Analyst", executor: "Executor", risk: "Risk", autobot: "Auto bot" };
   const agentTitle = a => (a && TITLE[a.name]) || (a && a.name) || "—";
@@ -481,6 +481,74 @@
   const DESK_BOT = "https://t.me/Tradingaibotgrok_bot?start=";
   const posId = id => Number.isInteger(id) && id > 0 ? id : null;
   const tgLink = payload => /^[A-Za-z0-9_-]{1,64}$/.test(payload) ? DESK_BOT + payload : null;
+  const TOPUP_BOOK = { paper_bot: "paperbot", PAPER: "paper", live_auto: "liveauto", LIVE: "livefomo" };
+  function topupIsPaper(book) { return book === "paper_bot" || book === "PAPER"; }
+  function topupAddr(book) {
+    if (book === "live_auto") return (S.bot && S.bot.address) || "";
+    if (book === "LIVE") {
+      const w = S.state && S.state.books && S.state.books.LIVE && S.state.books.LIVE.wallet;
+      return (w && w.address) || "";
+    }
+    return "";
+  }
+  function topupPayload(book, eur) {
+    const id = TOPUP_BOOK[book];
+    if (!id) return null;
+    const v = Math.round(+eur * 100) / 100;
+    if (!isFinite(v) || v < 1 || v > 10000) return null;
+    const whole = Math.trunc(v), dec = Math.round((v - whole) * 100);
+    const tok = dec <= 0 ? String(whole) : (dec % 10 === 0 ? whole + "p" + (dec / 10) : whole + "p" + dec);
+    return "topup_" + id + "_" + tok;
+  }
+  function topupBar(book) {
+    if (!book || book === "misses") return "";
+    const paper = topupIsPaper(book);
+    const amt = (S.topupAmt && S.topupAmt[book] != null) ? S.topupAmt[book] : 30;
+    if (paper) {
+      const href = tgLink(topupPayload(book, amt) || "");
+      const btns = [10, 30, 50].map(n => `<button type="button" class="topup-amt${+n === +amt ? " on" : ""}" data-topup-amt="${n}">€${n}</button>`).join("");
+      return `<div class="topup" data-topup-book="${esc(book)}">
+        <div class="topup-row"><span class="topup-label">Top up</span>
+          <div class="seg topup-seg">${btns}</div>
+          <label class="topup-in">€<input id="topupin" type="number" inputmode="decimal" min="1" max="10000" step="1" value="${esc(String(amt))}" aria-label="Top up euros"></label>
+          ${href ? `<a class="mbtn" id="topupgo" href="${esc(href)}" target="_blank" rel="noopener">Top up in Telegram</a>` : `<span class="mbtn ghost">Enter a euro amount</span>`}
+        </div>
+        <div class="s wrap ter">Credits this paper book in euro, converted to SOL at the current rate. Shown as a top-up marker, not as profit.</div>
+      </div>`;
+    }
+    const addr = topupAddr(book);
+    const note = book === "LIVE"
+      ? "FOMO is read-only here. Send SOL yourself if you want to fund that account. The desk will not move FOMO funds."
+      : "Send SOL on Solana to this auto-bot wallet. The desk will not move funds for you. Only send what you can lose.";
+    return `<div class="topup live">
+      <div class="topup-row"><span class="topup-label">Top up</span></div>
+      <div class="addr" id="topupaddr" title="${esc(addr)}">${esc(addr || "not set")}</div>
+      ${addr ? '<div class="botbtns"><button type="button" class="mbtn" id="topupcopy">Copy address</button></div>' : ""}
+      <div class="s wrap ter">${esc(note)}</div>
+    </div>`;
+  }
+  function bindTopup(root) {
+    root = root || document;
+    const box = root.querySelector(".topup");
+    const book = box && box.getAttribute("data-topup-book");
+    const inp = root.querySelector("#topupin");
+    const go = root.querySelector("#topupgo");
+    const sync = () => {
+      if (!inp || !book) return;
+      const v = +inp.value;
+      S.topupAmt = S.topupAmt || {};
+      if (isFinite(v)) S.topupAmt[book] = v;
+      const href = tgLink(topupPayload(book, S.topupAmt[book]) || "");
+      if (go && href) { go.href = href; go.removeAttribute("aria-disabled"); }
+      root.querySelectorAll("[data-topup-amt]").forEach(b => b.classList.toggle("on", +b.dataset.topupAmt === +inp.value));
+    };
+    if (inp) inp.addEventListener("input", sync);
+    root.querySelectorAll("[data-topup-amt]").forEach(b => { b.onclick = () => { if (inp) { inp.value = b.dataset.topupAmt; sync(); } }; });
+    const c = root.querySelector("#topupcopy");
+    const addrEl = root.querySelector("#topupaddr");
+    const addr = (addrEl && (addrEl.getAttribute("title") || addrEl.textContent)) || "";
+    if (c && addr && addr !== "not set") c.onclick = async () => { try { await navigator.clipboard.writeText(addr); toast("Address copied"); } catch (e) { toast(addr); } };
+  }
   const tpText = (pct, part) => pct == null ? null : "+" + (+pct).toLocaleString("en-US", { maximumFractionDigits: 2 }) + "% · sell " + (part === "half" ? "half" : "all");
   function tpPayload(id, pct, part, prefix) {
     const v = Math.round(+pct * 10) / 10;
@@ -1043,6 +1111,11 @@
   }
   function enrichMarks(list) {
     return (list || []).map(m => {
+      if ((m.kind || "") === "topup") {
+        const eur = (m.eur != null && isFinite(m.eur)) ? Number(m.eur) : null;
+        const label = m.label || (eur != null ? "€" + eur.toFixed(2) : "Top up");
+        return { ...m, kind: "topup", color: m.color || "gold", label, name: "Top up", logo: null };
+      }
       const kind = m.kind || (/^Bought /i.test(m.text || "") ? "bought" : (m.color === "red" ? "stopped" : "sold"));
       const label = m.label || (kind === "bought" ? markBuyLabel(m) : markSellLabel({ ...m, kind }));
       return { ...m, kind, label, name: markName({ ...m, kind }), logo: logoFor(m.mint) };
@@ -1054,10 +1127,14 @@
     let layer = wrap.querySelector(".chartmarks");
     if (!layer) { layer = document.createElement("div"); layer.className = "chartmarks"; wrap.appendChild(layer); }
     layer.innerHTML = (items || []).map(it => {
-      const href = it.mint ? coinHref(it.mint) : "#";
+      const href = it.mint ? coinHref(it.mint) : "";
       const title = it.text || it.label || "";
-      const col = it.color || (it.kind === "bought" ? "blue" : it.kind === "stopped" ? "red" : "green");
-      return `<a class="cmark ${esc(col)}" href="${href}" style="left:${it.x}px;top:${it.y}px;width:${it.w}px" title="${esc(title)}" aria-label="${esc(title)}">${logo(it.name, it.logo, 16)}<span>${esc(it.label)}</span></a>`;
+      const col = it.color || (it.kind === "topup" ? "gold" : it.kind === "bought" ? "blue" : it.kind === "stopped" ? "red" : "green");
+      const inner = `${it.kind === "topup" ? "" : logo(it.name, it.logo, 16)}<span>${esc(it.label)}</span>`;
+      const st = `style="left:${it.x}px;top:${it.y}px;width:${it.w}px" title="${esc(title)}" aria-label="${esc(title)}"`;
+      return href
+        ? `<a class="cmark ${esc(col)}" href="${href}" ${st}>${inner}</a>`
+        : `<span class="cmark ${esc(col)}" ${st}>${inner}</span>`;
     }).join("");
   }
 
@@ -1403,7 +1480,8 @@
          <div class="today"><span class="${today == null ? "sec" : today >= 0 ? "green" : "red"}">${today == null ? "—" : sgn(today)}</span><span class="sec">today</span>
          ${mult != null ? `<span class="pill mult">${Number(mult).toFixed(2)}×</span>` : ""}${unpriced ? `<span class="ter">${unpriced} position${unpriced > 1 ? "s" : ""} not priced yet</span>` : ""}</div>
         <div class="chartwrap"><canvas id="line"></canvas></div>
-        <div class="ranges">${["LIVE", "1H", "4H", "1D", "1W", "ALL"].map(r => `<button data-range="${r}" class="${r === S.range ? "on" : ""}">${r}</button>`).join("")}</div>`;
+        <div class="ranges">${["LIVE", "1H", "4H", "1D", "1W", "ALL"].map(r => `<button data-range="${r}" class="${r === S.range ? "on" : ""}">${r}</button>`).join("")}</div>
+        ${topupBar(book)}`;
     const mixOn = !!(S.state && S.state.mix && S.state.mix.active) && !missesOn;
     const mixBoard = mixOn ? `<div class="mixgrid">${(mixCards() || []).map(mixCard).join("")}</div>` : "";
     const html = navbar(S.showSearch ? `<div class="search"><input id="q" type="search" placeholder="Name, symbol or mint" value="${esc(S.search)}" autocomplete="off" autocapitalize="off"></div><div class="results">${results}</div>` : "") +
@@ -1449,6 +1527,7 @@
         }, chartPrev);
       }
       afterCards();
+      bindTopup(view);
     } };
   }
   function holdAmt(v) {
@@ -3091,15 +3170,17 @@
         ${kv("Per trade", "up to " + esc(lim.max_trade_pct) + "%" + (lim.sniper_max_trade_pct != null ? " · sniper cap " + esc(lim.sniper_max_trade_pct) + "%" : "") + " · " + esc(lim.reserve_sol) + " SOL kept for fees")}
         <div class="botbtns">${b.enabled ? btn("bot_off", "Turn off") : btn("bot_on", "Turn on")}${b.mode === "LIVE" ? btn("bot_dry", "Back to DRY") : ""}${btn("bot", "Status")}${btn("bot_pnl", "PnL")}${btn("bot_withdraw", "Withdraw")}${btn("bot_kill", "Kill · sell all", "danger")}</div>
         ${b.mode === "DRY" ? '<div class="s wrap ter" style="margin-top:8px">Real trades: type BOT LIVE (capitals) in the desk bot.</div>' : ""}</div>
-      <div class="card"><h3>Wallet</h3><div class="addr" id="botaddr" title="${esc(b.address || "")}">${esc(b.address || "not created")}</div>
+      ${topupBar("paper_bot")}
+      <div class="card"><h3>Top up · LIVE wallet</h3><div class="addr" id="botaddr" title="${esc(b.address || "")}">${esc(b.address || "not created")}</div>
         ${b.address ? '<div class="botbtns"><button type="button" class="mbtn" id="botcopy">Copy address</button>' + ext("https://solscan.io/account/" + b.address, "Solscan", "mbtn") + "</div>" : ""}
-        <div class="s wrap ter" style="margin-top:8px">Send SOL (Solana network) to this address to fund the bot. Only send what you can lose. Withdraw opens Telegram and sends only to your Phantom${b.owner_address ? " <span class=\"addr inline\">" + esc(shortAddr(b.owner_address)) + "</span>" : ""}; the destination cannot be changed.</div></div>
+        <div class="s wrap ter" style="margin-top:8px">Send SOL (Solana network) to this address to fund the live auto bot. Only send what you can lose. The desk will not move funds for you. Withdraw opens Telegram and sends only to your Phantom${b.owner_address ? " <span class=\"addr inline\">" + esc(shortAddr(b.owner_address)) + "</span>" : ""}; the destination cannot be changed.</div></div>
       <div class="sh"><h2>Open positions</h2></div><div class="list">${pos || '<div class="empty">No open bot coins</div>'}</div>
       <div class="sh"><h2>Trades</h2></div><div class="list">${trades || '<div class="empty">No bot trades yet</div>'}</div>
       <div class="gut s ter" style="margin:14px 0 8px">Updated ${esc(agoS(b.updated_at))}</div>`;
     return { html, after() {
       const c = document.getElementById("botcopy");
       if (c) c.onclick = async () => { try { await navigator.clipboard.writeText(b.address); toast("Address copied"); } catch (e) { toast(b.address); } };
+      bindTopup(view);
       const line = document.getElementById("botline");
       if (line && window.DeskChart) {
         const fmtBot = unit === "sol" ? (v => v == null || !isFinite(v) ? "—" : Number(v).toFixed(4) + " SOL")
