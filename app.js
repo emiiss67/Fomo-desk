@@ -9,7 +9,7 @@
   const SHOT = !!QS.get("shot");                             // one-shot render, no poll loop
   if (LOCAL) { const b = QS.get("book"); if (b) try { window.__seedBook = b; } catch (e) {} }
   const POLL_VISIBLE_S = 1, POLL_HIDDEN_S = 15, POLL_S = POLL_VISIBLE_S, MAX_BACKOFF = 60;
-  const APP_VERSION = "v65";   // bump with every app release (also index.html ?v= and sw.js CACHE)
+  const APP_VERSION = "v66";   // bump with every app release (also index.html ?v= and sw.js CACHE)
   const AGENTS = ["scanner", "auditor", "analyst", "executor", "risk"];
   const TITLE = { scanner: "Scanner", auditor: "Auditor", analyst: "Analyst", executor: "Executor", risk: "Risk", autobot: "Auto bot" };
   const agentTitle = a => (a && TITLE[a.name]) || (a && a.name) || "—";
@@ -658,6 +658,8 @@
     } catch (e) { return ""; }
   }
   const moneyS = v => fmtMoney(v, true);
+  const solFmt = v => (v == null || !isFinite(v)) ? null : (Number(v).toFixed(4).replace(/0+$/, "").replace(/\.$/, "") + " SOL");
+  const solSigned = v => (v == null || !isFinite(v)) ? null : ((v >= 0 ? "+" : "") + Number(v).toFixed(4) + " SOL");
   const kfmt = v => {
     if (v == null || !isFinite(v)) return "—";
     const x = hasEur() ? usdToEur(v) : v;
@@ -1499,10 +1501,10 @@
     const paperLabel = st.mode === "LIVE" ? "PAPER shadow" : "PAPER";
     const heroLabel = missesOn ? "Misses tonight"
       : book === "live_auto" ? "LIVE auto bot"
-      : book === "paper_bot" ? "Paper bot"
+      : book === "paper_bot" ? "Copy bot"
       : book === "LIVE" ? "LIVE FOMO stack"
       : (st.mode === "LIVE" ? "PAPER shadow stack" : "Desk PAPER stack");
-    const bookseg = `<div class="ranges bookseg" role="tablist" aria-label="Book">${[["live_auto","LIVE auto"],["paper_bot","Paper bot"],["LIVE","LIVE FOMO"],["PAPER",paperLabel],["misses","Misses"]].map(([id, label]) =>
+    const bookseg = `<div class="ranges bookseg" role="tablist" aria-label="Book">${[["live_auto","LIVE auto"],["paper_bot","Copy bot"],["LIVE","LIVE FOMO"],["PAPER",paperLabel],["misses","Misses"]].map(([id, label]) =>
       `<button type="button" data-book="${id}" class="${id === book ? "on" : ""}">${esc(label)}</button>`).join("")}</div>`;
     const missRows = (st.misses || []).map(missRow).join("");
     const rows = ((S.activity[0] && S.activity[0].rows) || []).slice(0, 5);
@@ -1552,7 +1554,7 @@
         const empty = rng.empty || !(rng.points || []).length
           ? (book === "LIVE" ? "No LIVE FOMO balance history for this range" :
              book === "live_auto" ? "No LIVE auto-bot balance history for this range" :
-             book === "paper_bot" ? "No paper-bot balance history for this range" :
+             book === "paper_bot" ? "No Copy bot balance history for this range" :
              "No balance history for this range")
           : "";
         chartPrev = DeskChart.line(line, {
@@ -1598,10 +1600,54 @@
       <div class="s wrap">${esc(reason)} · signal ${m.signalPrice == null ? "—" : nat(m.signalPrice)} → now ${m.priceNow == null ? "—" : nat(m.priceNow)} · ${esc(paperTxt)}</div></span>
       <span class="v">${after == null ? '<span class="ter">—</span>' : `<span class="cpill ${after >= 0 ? "up" : "down"}">${sgn(after, 1)}</span>`}</span></a>`;
   }
+  function pickNum(obj, keys) {
+    if (!obj) return null;
+    for (const k of keys) {
+      if (!Object.prototype.hasOwnProperty.call(obj, k)) continue;
+      const v = obj[k];
+      if (v == null || v === "") continue;
+      const n = typeof v === "number" ? v : Number(v);
+      if (isFinite(n)) return n;
+    }
+    return null;
+  }
+  function fmtTok(n) {
+    if (n == null || !isFinite(n)) return null;
+    const a = Math.abs(n);
+    const trim = s => String(s).replace(/\.0+$/, "").replace(/(\.[1-9]*)0+$/, "$1");
+    if (a >= 1e6) return trim((n / 1e6).toFixed(2)) + "M";
+    if (a >= 1000) return trim((n / 1000).toFixed(a >= 10000 ? 1 : 2)) + "k";
+    if (a >= 1) return n.toLocaleString("en-US", { maximumFractionDigits: 2 });
+    return n.toLocaleString("en-US", { maximumFractionDigits: 6 });
+  }
+  function amtPair(solV, usdV) {
+    const solTxt = solV != null ? solFmt(solV) : null;
+    const usdTxt = usdV != null ? money(usdV) : null;
+    if (solTxt && usdTxt) return esc(solTxt) + " (" + esc(usdTxt) + ")";
+    if (solTxt) return esc(solTxt);
+    if (usdTxt) return esc(usdTxt);
+    return null;
+  }
   function openPositions() {
     // Prefer the selected book's positions (state.books[book].open_positions). The activity feed
     // only keeps the newest ~30 rows on Home, so a hold from an earlier night would otherwise vanish.
     const book = activeBook();
+    if (book === "paper_bot" || book === "live_auto") {
+      const want = book === "paper_bot" ? "DRY" : "LIVE";
+      let cards = S.state && S.state.books && S.state.books[book] && Array.isArray(S.state.books[book].open_positions)
+        ? S.state.books[book].open_positions : null;
+      if (!cards && S.bot) {
+        cards = (S.bot.positions || []).filter(p => p && p.status !== "closed" && !p.closed_at && (!p.mode || p.mode === want));
+      }
+      return (cards || []).filter(p => p && p.status !== "closed" && !p.closed_at).map(r => ({
+        row: { mint: r.mint, title: "Bought " + (r.name || r.mint), logo: r.logo, hold: !!r.hold,
+               tpPct: r.tpPct != null ? r.tpPct : r.tp_pct, tpPart: r.tpPart != null ? r.tpPart : r.tp_part,
+               halfSold: !!(r.halfSold || r.half_sold), id: r.id, mode: r.mode || want },
+        coin: S.coin[r.mint],
+        card: r,
+        href: r.id != null ? "#/bot/" + encodeURIComponent(r.id) : coinHref(r.mint)
+      }));
+    }
     const fromBook = S.state && S.state.books && S.state.books[book] && Array.isArray(S.state.books[book].open_positions)
       ? S.state.books[book].open_positions
       : (S.state && Array.isArray(S.state.open_positions) && book === ((S.state.paper) ? "PAPER" : "LIVE") ? S.state.open_positions : null);
@@ -1609,28 +1655,82 @@
       return fromBook.map(r => ({
         row: { mint: r.mint, title: "Bought " + (r.name || r.mint), logo: r.logo,
                value: r.sizeUsd != null ? money(r.sizeUsd) : "", hold: !!r.hold, tpPct: r.tpPct, tpPart: r.tpPart,
-               halfSold: !!r.halfSold, halfPnlUsd: r.halfPnlUsd },
-        coin: S.coin[r.mint]
+               halfSold: !!r.halfSold, halfPnlUsd: r.halfPnlUsd, id: r.id, mode: r.mode },
+        coin: S.coin[r.mint],
+        card: r,
+        href: coinHref(r.mint)
       }));
     }
     const rows = S.activity.flatMap(p => p.rows || []), latest = new Map();
     rows.forEach(r => { if (r.mint && ["bought", "sold", "stopped"].includes(r.kind) && !latest.has(r.mint)) latest.set(r.mint, r); });
-    return [...latest.values()].filter(r => r.kind === "bought").map(r => ({ row: r, coin: S.coin[r.mint] }));
+    return [...latest.values()].filter(r => r.kind === "bought").map(r => ({ row: r, coin: S.coin[r.mint], href: coinHref(r.mint) }));
+  }
+  function posFacts(o) {
+    const r = o.row || {}, c = o.coin, card = o.card || r, p = c && c.position;
+    const m = p ? posMark(p, r.mint || card.mint, c) : null;
+    const investedSol = pickNum(card, ["investedSol", "cost_sol"]);
+    const investedUsd = pickNum(card, ["investedUsd", "cost_usd"]);
+    const valueSol = pickNum(card, ["valueSol", "value_sol"]);
+    const valueUsd = pickNum(card, ["valueUsd", "value_usd"]);
+    const heldSol = pickNum(card, ["heldSol", "size_sol"]);
+    const heldUsd = pickNum(card, ["heldUsd"]);
+    const heldTokens = pickNum(card, ["heldTokens", "held_tokens"]);
+    const soldSol = pickNum(card, ["soldSol", "sold_sol"]);
+    const soldUsd = pickNum(card, ["soldUsd", "sold_usd"]);
+    const realizedSol = pickNum(card, ["realizedSol", "realized_sol", "halfPnlSol", "half_pnl_sol"]);
+    const realizedUsd = pickNum(card, ["realizedUsd", "realized_usd", "halfPnlUsd", "half_pnl_usd"]);
+    let pct = pickNum(card, ["pnlPct", "pnl_pct"]);
+    let nowUsd = valueUsd, nowSol = valueSol;
+    let invUsd = investedUsd, invSol = investedSol;
+    if (invUsd == null && p && p.sizeUsd != null) {
+      const half = !!(p.halfSold || card.halfSold || card.half_sold);
+      invUsd = half ? p.sizeUsd * 2 : p.sizeUsd;
+    }
+    if (nowUsd == null && m && m.now != null) nowUsd = m.now;
+    if (pct == null && m && m.pct != null) pct = m.pct;
+    const half = !!(p && p.halfSold) || !!(r.halfSold) || !!(card.halfSold || card.half_sold);
+    return { investedSol: invSol, investedUsd: invUsd, valueSol: nowSol, valueUsd: nowUsd,
+             heldSol, heldUsd, heldTokens, soldSol, soldUsd, realizedSol, realizedUsd, pct, half,
+             markFromCoin: m };
   }
   function posRow(o) {
-    const r = o.row, c = o.coin, p = c && c.position, m = p ? posMark(p, r.mint, c) : null;
-    const name = (r.title || "").replace(/^Bought /, "");
-    const sub = p ? (m && m.now != null ? money(p.sizeUsd) + " in → " + money(m.now) : money(p.sizeUsd) + " in")
-      : esc(r.value || r.subtitle || "");
-    const pct = m && m.pct;
-    const held = (p && p.hold) || r.hold;
-    const tpPct = r.tpPct != null ? r.tpPct : p && p.open ? p.tpPct : null, tpPart = r.tpPct != null ? r.tpPart : p && p.tpPart;
+    const r = o.row, c = o.coin, f = posFacts(o);
+    const name = (r.title || "").replace(/^Bought /, "") || (o.card && o.card.name) || "";
+    const held = (c && c.position && c.position.hold) || r.hold || (o.card && o.card.hold);
+    const tpPct = r.tpPct != null ? r.tpPct : (c && c.position && c.position.open ? c.position.tpPct : null);
+    const tpPart = r.tpPct != null ? r.tpPart : (c && c.position && c.position.tpPart);
     const tp = tpText(tpPct, tpPart);
-    const half = (p && p.halfSold) || r.halfSold;
-    const halfPnl = (p && p.halfPnlUsd != null) ? p.halfPnlUsd : r.halfPnlUsd;
-    return `<a class="row" href="${coinHref(r.mint)}">${logo(name, r.logo || (c && c.logo), 40)}<span class="main"><div class="t">${esc(name)}${held ? ' <span class="pill paper">HOLD</span>' : ""}${half ? ' <span class="pill greenp">Half sold</span>' : ""}</div>
-      <div class="s">${sub}${half && halfPnl != null ? ` · half ${moneyS(halfPnl)}` : ""}${tp ? ` · <span class="green">TP ${esc(tp)}</span>` : ""}</div></span>
-      <span class="v">${pct == null ? '<span class="ter">—</span>' : `<span class="cpill ${pct >= 0 ? "up" : "down"}">${sgn(pct, 1)}</span>`}</span></a>`;
+    const inv = amtPair(f.investedSol, f.investedUsd);
+    const now = amtPair(f.valueSol, f.valueUsd);
+    const tok = fmtTok(f.heldTokens);
+    const lines = [];
+    lines.push(inv ? ("Invested " + inv) : '<span class="red">Invested n/a</span>');
+    if (now) {
+      let hold = "Now " + now;
+      if (tok) hold += " · holding " + esc(tok);
+      else if (f.heldSol != null || f.heldUsd != null) {
+        const h = amtPair(f.heldSol, f.heldUsd);
+        if (h) hold += " · holding " + h;
+      }
+      lines.push(hold);
+    } else {
+      lines.push('<span class="red">Now n/a</span>' + (tok ? " · holding " + esc(tok) : ""));
+    }
+    if (f.half || f.soldSol != null || f.soldUsd != null || f.realizedSol != null || f.realizedUsd != null) {
+      const sold = amtPair(f.soldSol, f.soldUsd);
+      const real = amtPair(f.realizedSol, f.realizedUsd);
+      const bits = [];
+      if (sold) bits.push("sold " + sold);
+      if (real) bits.push("realized " + (f.realizedUsd != null ? esc(moneyS(f.realizedUsd)) : esc(solSigned(f.realizedSol))));
+      if (!bits.length) bits.push("partial sale");
+      lines.push(bits.join(" · "));
+    }
+    if (tp) lines[lines.length - 1] += ` · <span class="green">TP ${esc(tp)}</span>`;
+    const href = o.href || coinHref(r.mint);
+    const pct = f.pct;
+    return `<a class="row" href="${href}">${logo(name, r.logo || (c && c.logo) || (o.card && o.card.logo), 40)}<span class="main"><div class="t">${esc(name)}${held ? ' <span class="pill paper">HOLD</span>' : ""}${f.half ? ' <span class="pill greenp">Half sold</span>' : ""}</div>
+      <div class="s wrap">${lines.join("<br>")}</div></span>
+      <span class="v">${pct == null ? '<span class="red">n/a</span>' : `<span class="cpill ${pct >= 0 ? "up" : "down"}">${sgn(pct, 1)}</span>`}</span></a>`;
   }
   function manualBlock(p, mint) {
     const id = posId(p.id);
@@ -3185,7 +3285,7 @@
     const chartHint = viewed.fallback
       ? `<div class="charthint">Showing ${esc(viewed.shown)} · no new ${esc(botRange)} samples</div>`
       : "";
-    const html = navbar() + `<section class="hero glass"><div class="herotop"><span class="botlabel">Bot wallet</span><span class="heropills">${b.mode === "DRY" ? '<span class="pill paper">DRY</span>' : '<span class="pill redp">LIVE</span>'}${b.enabled ? '<span class="pill greenp">ON</span>' : '<span class="pill">OFF</span>'}</span></div>
+    const html = navbar() + `<section class="hero glass"><div class="herotop"><span class="botlabel">${b.mode === "DRY" ? "Copy bot" : "LIVE auto bot"}</span><span class="heropills">${b.mode === "DRY" ? '<span class="pill paper">DRY</span>' : '<span class="pill redp">LIVE</span>'}${b.enabled ? '<span class="pill greenp">ON</span>' : '<span class="pill">OFF</span>'}</span></div>
        <div class="bigrow"><span class="big glow">${headline != null ? esc(headline) : "—"}</span></div>
        <div class="today">${todayLine}
        ${mult != null ? `<span class="pill mult">${esc(String(mult))}×</span>` : ""}
@@ -3621,7 +3721,7 @@
   if ("serviceWorker" in navigator && !LOCAL) {
     let swReload = false;
     navigator.serviceWorker.addEventListener("controllerchange", () => { if (swReload) return; swReload = true; location.reload(); });
-    navigator.serviceWorker.register("sw.js?v=64", { updateViaCache: "none" }).then(reg => { try { reg.update(); } catch (e) {} }).catch(() => {});
+    navigator.serviceWorker.register("sw.js?v=66", { updateViaCache: "none" }).then(reg => { try { reg.update(); } catch (e) {} }).catch(() => {});
   }
   render();
   if (BASE) poll();
