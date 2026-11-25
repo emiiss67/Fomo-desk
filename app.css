@@ -1348,3 +1348,8 @@ html[data-theme="daylight"] .cd.dn .dn1,html[data-theme="daylight"] .cd.dn .dv{c
 .topup-in{display:inline-flex;align-items:center;gap:2px;background:rgba(255,255,255,.06);border-radius:10px;padding:0 8px;height:36px}
 .topup-in input{width:68px;background:transparent;border:0;color:inherit;font:inherit;outline:none}
 .topup-seg{display:inline-flex}
+
+/* t369u trailing toggle, next to Top up */
+.trailbar{margin-top:10px}
+.trail-seg a.mbtn{display:inline-flex;align-items:center;height:36px;padding:0 12px;text-decoration:none}
+.trail-seg a.mbtn.on{font-weight:700}

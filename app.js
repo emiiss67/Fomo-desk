@@ -9,7 +9,7 @@
   const SHOT = !!QS.get("shot");                             // one-shot render, no poll loop
   if (LOCAL) { const b = QS.get("book"); if (b) try { window.__seedBook = b; } catch (e) {} }
   const POLL_VISIBLE_S = 1, POLL_HIDDEN_S = 15, POLL_S = POLL_VISIBLE_S, MAX_BACKOFF = 60;
-  const APP_VERSION = "v64";   // bump with every app release (also index.html ?v= and sw.js CACHE)
+  const APP_VERSION = "v65";   // bump with every app release (also index.html ?v= and sw.js CACHE)
   const AGENTS = ["scanner", "auditor", "analyst", "executor", "risk"];
   const TITLE = { scanner: "Scanner", auditor: "Auditor", analyst: "Analyst", executor: "Executor", risk: "Risk", autobot: "Auto bot" };
   const agentTitle = a => (a && TITLE[a.name]) || (a && a.name) || "—";
@@ -548,6 +548,41 @@
     const addrEl = root.querySelector("#topupaddr");
     const addr = (addrEl && (addrEl.getAttribute("title") || addrEl.textContent)) || "";
     if (c && addr && addr !== "not set") c.onclick = async () => { try { await navigator.clipboard.writeText(addr); toast("Address copied"); } catch (e) { toast(addr); } };
+  }
+  function trailBookId(book) { return TOPUP_BOOK[book] || null; }
+  function trailOn(book) {
+    const id = trailBookId(book);
+    const t = (S.state && S.state.trail) || (S.bot && S.bot.trail) || {};
+    if (!id) return true;
+    const row = t[id];
+    if (row && typeof row === "object" && "on" in row) return !!row.on;
+    if (typeof row === "boolean") return row;
+    return true; // missing = ON, never invent off
+  }
+  function trailBar(book) {
+    if (!book || book === "misses") return "";
+    const id = trailBookId(book);
+    if (!id) return "";
+    const on = trailOn(book);
+    const hrefOn = tgLink("trail_" + id + "_on");
+    const hrefOff = tgLink("trail_" + id + "_off");
+    if (!hrefOn || !hrefOff) return "";
+    const copyNote = id === "paperbot"
+      ? " Copy trades stay on leader-exit only and are not affected."
+      : "";
+    const hint = on
+      ? "Trailing stop is on (current behavior)."
+      : "Trailing is off. The bot holds while volume, buyers and attention stay strong, then sells 100% of a profitable lot when attention drops. Hard stop and the daily stop stay on.";
+    return `<div class="topup trailbar" data-trail-book="${esc(book)}">
+      <div class="topup-row"><span class="topup-label">Trailing</span>
+        <div class="seg topup-seg trail-seg">
+          <a class="mbtn${on ? " on" : ""}" href="${esc(hrefOn)}" target="_blank" rel="noopener">On</a>
+          <a class="mbtn${!on ? " on" : ""}" href="${esc(hrefOff)}" target="_blank" rel="noopener">Off</a>
+        </div>
+        <span class="pill ${on ? "greenp" : ""}">${on ? "ON" : "OFF"}</span>
+      </div>
+      <div class="s wrap ter">${esc(hint)}${esc(copyNote)}</div>
+    </div>`;
   }
   const tpText = (pct, part) => pct == null ? null : "+" + (+pct).toLocaleString("en-US", { maximumFractionDigits: 2 }) + "% · sell " + (part === "half" ? "half" : "all");
   function tpPayload(id, pct, part, prefix) {
@@ -1481,7 +1516,7 @@
          ${mult != null ? `<span class="pill mult">${Number(mult).toFixed(2)}×</span>` : ""}${unpriced ? `<span class="ter">${unpriced} position${unpriced > 1 ? "s" : ""} not priced yet</span>` : ""}</div>
         <div class="chartwrap"><canvas id="line"></canvas></div>
         <div class="ranges">${["LIVE", "1H", "4H", "1D", "1W", "ALL"].map(r => `<button data-range="${r}" class="${r === S.range ? "on" : ""}">${r}</button>`).join("")}</div>
-        ${topupBar(book)}`;
+        ${topupBar(book)}${trailBar(book)}`;
     const mixOn = !!(S.state && S.state.mix && S.state.mix.active) && !missesOn;
     const mixBoard = mixOn ? `<div class="mixgrid">${(mixCards() || []).map(mixCard).join("")}</div>` : "";
     const html = navbar(S.showSearch ? `<div class="search"><input id="q" type="search" placeholder="Name, symbol or mint" value="${esc(S.search)}" autocomplete="off" autocapitalize="off"></div><div class="results">${results}</div>` : "") +
@@ -3171,9 +3206,11 @@
         <div class="botbtns">${b.enabled ? btn("bot_off", "Turn off") : btn("bot_on", "Turn on")}${b.mode === "LIVE" ? btn("bot_dry", "Back to DRY") : ""}${btn("bot", "Status")}${btn("bot_pnl", "PnL")}${btn("bot_withdraw", "Withdraw")}${btn("bot_kill", "Kill · sell all", "danger")}</div>
         ${b.mode === "DRY" ? '<div class="s wrap ter" style="margin-top:8px">Real trades: type BOT LIVE (capitals) in the desk bot.</div>' : ""}</div>
       ${topupBar("paper_bot")}
+      ${trailBar("paper_bot")}
       <div class="card"><h3>Top up · LIVE wallet</h3><div class="addr" id="botaddr" title="${esc(b.address || "")}">${esc(b.address || "not created")}</div>
         ${b.address ? '<div class="botbtns"><button type="button" class="mbtn" id="botcopy">Copy address</button>' + ext("https://solscan.io/account/" + b.address, "Solscan", "mbtn") + "</div>" : ""}
         <div class="s wrap ter" style="margin-top:8px">Send SOL (Solana network) to this address to fund the live auto bot. Only send what you can lose. The desk will not move funds for you. Withdraw opens Telegram and sends only to your Phantom${b.owner_address ? " <span class=\"addr inline\">" + esc(shortAddr(b.owner_address)) + "</span>" : ""}; the destination cannot be changed.</div></div>
+      ${trailBar("live_auto")}
       <div class="sh"><h2>Open positions</h2></div><div class="list">${pos || '<div class="empty">No open bot coins</div>'}</div>
       <div class="sh"><h2>Trades</h2></div><div class="list">${trades || '<div class="empty">No bot trades yet</div>'}</div>
       <div class="gut s ter" style="margin:14px 0 8px">Updated ${esc(agoS(b.updated_at))}</div>`;
