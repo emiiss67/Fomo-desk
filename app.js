@@ -9,7 +9,7 @@
   const SHOT = !!QS.get("shot");                             // one-shot render, no poll loop
   if (LOCAL) { const b = QS.get("book"); if (b) try { window.__seedBook = b; } catch (e) {} }
   const POLL_VISIBLE_S = 1, POLL_HIDDEN_S = 15, POLL_S = POLL_VISIBLE_S, MAX_BACKOFF = 60;
-  const APP_VERSION = "v66";   // bump with every app release (also index.html ?v= and sw.js CACHE)
+  const APP_VERSION = "v67";   // bump with every app release (also index.html ?v= and sw.js CACHE)
   const AGENTS = ["scanner", "auditor", "analyst", "executor", "risk"];
   const TITLE = { scanner: "Scanner", auditor: "Auditor", analyst: "Analyst", executor: "Executor", risk: "Risk", autobot: "Auto bot" };
   const agentTitle = a => (a && TITLE[a.name]) || (a && a.name) || "—";
@@ -1483,6 +1483,14 @@
     return backbar("Getting attention", "#/home") + `<div class="gut s sec wrap" style="margin:10px 0">Coins people are pushing now: DEX boosts, community takeovers, GeckoTerminal trending and fast-rising buys (pump.fun callouts are behind a Cloudflare check). Tap one to scan it. Pump Indicator scores each coin from data the desk already has (no data stays no data). The bot only gives these a small attention-score bump when its own scanner finds them; it never buys on attention alone.</div>
       <div class="list glass">${body}</div>${a && a.updated ? `<div class="gut ter sm" style="margin-top:8px">Updated ${esc(String(a.updated).slice(11, 16))} UTC</div>` : ""}`;
   }
+  // owner-t393u: copy-leader feed health (OK / DEGRADED / DOWN); orange or red when a source is lost.
+  function feedChip(st) {
+    const f = st && st.copy_feed;
+    if (!f || !f.line) return "";
+    const cls = f.status === "ok" ? "running" : (f.status === "degraded" ? "paused" : "down");
+    return `<div class="achips"><span class="achip" style="white-space:normal;height:auto;min-height:28px;padding:5px 10px"><i class="live ${cls}"></i>${esc(f.line)}</span></div>`;
+  }
+
   function home() {
     if (LOCAL && QS.get("book")) S.book = QS.get("book");
     if (LOCAL && QS.get("range")) S.range = QS.get("range");
@@ -1525,7 +1533,7 @@
       `<section class="hero glass"><div class="herotop"><span class="ter">${esc(heroLabel)}</span>${book === "PAPER" ? '<span class="pill paper">PAPER</span>' : book === "LIVE" ? '<span class="pill redp">LIVE</span>' : ""}${mixOn ? '<span class="pill">Mix</span>' : ""}${book === "LIVE" && (bk.wallet && bk.wallet.stale) ? '<span class="pill stale">sync stale</span>' : ""}</div>
        ${bookseg}
        ${heroBody}${(!missesOn && mixOn) ? mixBoard : ""}
-      <div class="achips">${st.agents.map(a => `<a class="achip" href="#/agents"><i class="live ${esc(a.paused ? "paused" : a.status)}"></i>${esc(agentTitle(a))}</a>`).join("")}</div></section>
+      <div class="achips">${st.agents.map(a => `<a class="achip" href="#/agents"><i class="live ${esc(a.paused ? "paused" : a.status)}"></i>${esc(agentTitle(a))}</a>`).join("")}</div>${feedChip(st)}</section>
       <div class="scanbox glass">
         <div class="sh" style="margin:0 0 8px;padding:0"><h2>Scan a coin</h2></div>
         ${scanFormHtml("")}
